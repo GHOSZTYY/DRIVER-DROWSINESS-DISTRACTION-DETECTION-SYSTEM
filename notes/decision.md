@@ -4,7 +4,7 @@
 - **Output:** `dict { index: (x_px, y_px, z_norm) }` for all 468 points "we will get output like this pointers" 
 - **Returns `None` if no face detected — all callers must handle None!**
 
-The thresholds:- 
+The thresholds:-
 #### Mouth landmark indexes (for Samriddhi's mouth_mar.py):
 - Top lip: 13
 - Bottom lip: 14

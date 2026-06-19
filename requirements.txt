@@ -1,0 +1,14 @@
+opencv-python
+mediapipe
+numpy
+scipy
+ultralytics
+deepface
+streamlit
+pygame
+pyttsx3
+twilio
+python-dotenv
+pandas
+plotly
+pillow

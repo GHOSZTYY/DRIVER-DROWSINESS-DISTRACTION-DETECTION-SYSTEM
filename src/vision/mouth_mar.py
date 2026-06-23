@@ -47,3 +47,40 @@ def detect_yawn(mar, threshold=0.6):
         "mar": round(mar, 3),
         "yawning": yawning
     }
+if __name__ == "__main__":
+    import cv2
+    import sys
+    import os
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+    from src.vision.webcam import get_frame, cap
+    from src.vision.face_mesh import get_landmarks
+
+    print("MAR detector running... Press Q to quit.")
+    print("Open your mouth wide to simulate a yawn!")
+
+    while True:
+        frame = get_frame()
+        if frame is None:
+            continue
+
+        landmarks = get_landmarks(frame)
+
+        if landmarks:
+            mar = compute_mar(landmarks)
+            result = detect_yawn(mar)
+            color = (0, 0, 255) if result["yawning"] else (0, 255, 0)
+            label = "YAWNING!" if result["yawning"] else "Normal"
+            cv2.putText(frame, f"MAR: {result['mar']}  |  {label}",
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7, color, 2)
+        else:
+            cv2.putText(frame, "No face detected",
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7, (0, 0, 255), 2)
+
+        cv2.imshow("MAR Test", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()

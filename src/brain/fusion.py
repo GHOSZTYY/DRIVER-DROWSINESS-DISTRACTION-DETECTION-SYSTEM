@@ -10,7 +10,8 @@ def calculate_driver_state(
     eye_result,
     yawn_result,
     phone_result,
-    head_result
+    head_result,
+    emotion_result
 ):
     """
     Combines outputs from all detectors and calculates
@@ -48,6 +49,26 @@ def calculate_driver_state(
         score += 2
         reasons.append("Looking away")
 
+    # Emotion Detection
+    if emotion_result:
+        emotion = emotion_result.get("emotion")
+
+        if emotion == "angry":
+            score += 2
+            reasons.append("Angry")
+
+        elif emotion == "fear":
+            score += 2
+            reasons.append("Fear")
+
+        elif emotion == "sad":
+            score += 1
+            reasons.append("Sad")
+
+        elif emotion == "surprise":
+            score += 1
+            reasons.append("Surprised")
+
     # Decide Driver Status
     if score == 0:
        status = "SAFE"
@@ -69,5 +90,6 @@ def calculate_driver_state(
         "score": score,
         "status": status,
         "alarm": alarm,
+        "emotion": emotion_result.get("emotion") if emotion_result else None,
         "reasons": reasons
     }

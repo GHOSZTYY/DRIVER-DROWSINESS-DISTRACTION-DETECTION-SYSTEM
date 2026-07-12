@@ -2,27 +2,51 @@ import json
 import time
 import numpy as np
 import os
+import cv2
+import streamlit as st
+
+# Import the team's AI models directly into the calibration tool
+from src.vision.face_mesh import get_landmarks
+from src.vision.eye_ear import compute_ear, LEFT_EYE, RIGHT_EYE
+from src.vision.mouth_mar import compute_mar
 
 # Ensure the profiles directory exists
 os.makedirs('data/profiles', exist_ok=True)
 
-def run_calibration(driver_name, get_ear_fn, get_mar_fn, get_pose_fn, duration_sec=60):
-    """Records driver baselines for a set duration and saves to JSON."""
+def run_calibration(driver_name, duration_sec=5):
+    """Records driver baselines using the live webcam and saves to JSON."""
     ear_list = []
     mar_list = []
-    yaw_list = []
     
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW) # The magic Windows un-freezer!
     start_time = time.time()
     
-    # Collect data for the specified duration
+    # Create a placeholder in the sidebar to show the video feed
+    video_placeholder = st.sidebar.empty()
+    
     while time.time() - start_time < duration_sec:
-        # In a real Streamlit app, we might need to yield or handle frames differently,
-        # but this follows the core logic of sampling the functions.
-        ear_list.append(get_ear_fn())
-        mar_list.append(get_mar_fn())
-        yaw_list.append(get_pose_fn())
+        ret, frame = cap.read()
+        if not ret:
+            break
+            
+        landmarks = get_landmarks(frame)
+        if landmarks:
+            left = compute_ear(landmarks, LEFT_EYE)
+            right = compute_ear(landmarks, RIGHT_EYE)
+            ear_list.append((left + right) / 2.0)
+            mar_list.append(compute_mar(landmarks))
+            
+        # Show the video during calibration so you know it's working!
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        video_placeholder.image(rgb_frame, channels="RGB", use_column_width=True)
         
-        time.sleep(0.1) # Small sleep to simulate frame timing and not overload CPU
+    cap.release()
+    video_placeholder.empty() # Clear the video when done
+    
+    # Safe fallback if the camera couldn't find a face
+    if not ear_list:
+        ear_list = [0.25]
+        mar_list = [0.50]
         
     # Compute mean and standard deviation
     data = {
@@ -30,7 +54,7 @@ def run_calibration(driver_name, get_ear_fn, get_mar_fn, get_pose_fn, duration_s
         'ear_mean': float(np.mean(ear_list)),
         'ear_std': float(np.std(ear_list)),
         'mar_mean': float(np.mean(mar_list)),
-        'yaw_mean': float(np.mean(yaw_list))
+        'yaw_mean': 0.0 # Placeholder for pose math later
     }
     
     # Save as JSON

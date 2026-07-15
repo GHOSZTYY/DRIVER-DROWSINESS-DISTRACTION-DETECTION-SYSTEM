@@ -1,3 +1,17 @@
+import os
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
+
+# --- THE MONKEY PATCH ---
+# DeepFace throws a tantrum if it can't find the version string.
+# We are manually injecting it here before DeepFace even gets imported!
+import tensorflow as tf
+if not hasattr(tf, "__version__"):
+    tf.__version__ = "2.16.1"
+# ------------------------
+
+import streamlit as st
+import cv2
+import time
 import streamlit as st
 import cv2
 import time
@@ -14,6 +28,11 @@ except ImportError:
 from src.vision.face_mesh import get_landmarks
 from src.vision.eye_ear import compute_ear, LEFT_EYE, RIGHT_EYE
 from src.vision.mouth_mar import compute_mar
+
+# NEW IMPORTS: The 3 New Modules!
+from src.vision.head_pose import get_pose
+from src.vision.emotion_detection import detect_emotion
+from src.vision.phone_detector import PhoneDetector
 
 # Week 1: Basic App Setup
 st.set_page_config(page_title='Driver Safety')
@@ -89,6 +108,10 @@ if st.session_state.running:
     prev_time = time.time()
     frame_count = 0
     alert_frames = 0 # NEW: This keeps the red alert on screen smoothly!
+    alert_message = ""
+
+    phone_tracker = PhoneDetector(confidence_threshold=0.5, frame_threshold=10)
+    current_emotion = "Neutral" # Default state
 
     while cap.isOpened() and st.session_state.running:
         ret, frame = cap.read()
@@ -101,6 +124,7 @@ if st.session_state.running:
         # ==========================================
         # 1. RUN THE AI MODELS
         # ==========================================
+        # A. Face Mesh (Eyes & Mouth)
         landmarks = get_landmarks(frame)
         
         if landmarks:
@@ -108,13 +132,31 @@ if st.session_state.running:
             right = compute_ear(landmarks, RIGHT_EYE)
             current_ear = (left + right) / 2.0
             current_mar = compute_mar(landmarks)
+
+            # B. Head Pose (Distraction)
+            pose_result = get_pose(landmarks, frame.shape)
         else:
             current_ear = profile['ear_mean'] 
             current_mar = profile['mar_mean']
+            pose_result = None
             
+        # C. Emotion (Throttled to save FPS!)
+        if frame_count % 15 == 0:
+            emotion_data = detect_emotion(frame)
+            if emotion_data["emotion"]:
+                current_emotion = emotion_data["emotion"]
+
+        # D. Object Detection (Phone)
+        # ⚠️ WARNING: You need to replace this empty list with your actual YOLO function!
+        # Example: raw_detections = your_yolo_model.predict(frame)
+        raw_detections = [] 
+        phone_data = phone_tracker.detect(raw_detections)
         # ==========================================
         # 2. THE BRAIN
         # ==========================================
+        # Reset alert flag
+        trigger_alert = False
+
         # Eyes
         if current_ear < (profile['ear_mean'] * 0.8):
             drowsy_frames += 1
@@ -128,22 +170,42 @@ if st.session_state.running:
                 is_yawning = True
         else:
             is_yawning = False 
+
+        # Check Pose (Uses the boolean from head_pose.py)
+        is_distracted = False
+        if pose_result and pose_result["distracted"]:
+            is_distracted = True
             
         # ==========================================
         # 3. FIRE THE ALERTS (STABILIZED)
         # ==========================================
-        # If danger is detected, set a 30-frame timer so the alert stays on screen
-        if drowsy_frames >= DROWSY_THRESHOLD_FRAMES or total_yawns > 3:
+        # Determine WHAT to yell at the driver
+        if drowsy_frames >= DROWSY_THRESHOLD_FRAMES:
+            trigger_alert = True
+            alert_message = "🚨 CRITICAL DROWSINESS! WAKE UP! 🚨"
+        elif total_yawns > 3:
+            trigger_alert = True
+            alert_message = "🚨 EXCESSIVE YAWNING! TAKE A BREAK! 🚨"
+            total_yawns = 0 # Reset
+        elif is_distracted:
+            trigger_alert = True
+            alert_message = "⚠️ EYES ON THE ROAD! ⚠️"
+        elif phone_data["phone_detected"]:
+            trigger_alert = True
+            alert_message = "📱 PUT THE PHONE DOWN! 📱"
+        elif current_emotion in ["angry", "sad", "fear"]:
+            trigger_alert = True
+            alert_message = f"🧠 EMOTIONAL STRESS ({current_emotion.upper()}). PULL OVER. 🧠"
+
+        # Timer logic to keep the alert on screen
+        if trigger_alert:
             alert_frames = 30 
-            if total_yawns > 3:
-                total_yawns = 0 # Reset yawns so it doesn't get stuck!
                 
-        # Show the red alert as long as the timer is running
         if alert_frames > 0:
-            alert_placeholder.error("🚨 CRITICAL DROWSINESS DETECTED! WAKE UP! 🚨")
+            alert_placeholder.error(alert_message)
             alert_frames -= 1
         else:
-            alert_placeholder.success("✅ Driver is alert. Eyes on the road.")
+            alert_placeholder.success(f"✅ Driver alert. Emotion: {current_emotion.title()}")
             
         # ==========================================
         # 4. VIDEO & FPS
@@ -152,10 +214,9 @@ if st.session_state.running:
         video_placeholder.image(rgb_frame, channels="RGB", use_column_width=True)
         
         curr_time = time.time()
-        fps = 1 / (curr_time - prev_time + 0.001) # +0.001 prevents a math crash!
+        fps = 1 / (curr_time - prev_time + 0.001) 
         prev_time = curr_time
         
-        # Only send the FPS to the browser every 10 frames so it doesn't freeze
         if frame_count % 10 == 0:
             fps_placeholder.metric('FPS', f"{int(fps)}")
 

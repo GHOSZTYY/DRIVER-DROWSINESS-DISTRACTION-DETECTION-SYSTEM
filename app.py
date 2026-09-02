@@ -9,215 +9,232 @@ if not hasattr(tf, "__version__"):
     tf.__version__ = "2.16.1"
 # ------------------------
 
-import streamlit as st
 import cv2
 import time
-import streamlit as st
-import cv2
-import time
+import threading
+
 from src.alerts.sos import send_sos_alert
+from src.alerts.beep import play_beep
+from src.alerts.voice import speak_warning
 from src.vision.calibration import run_calibration, load_profile
-# Importing Mridul's webcam function
-try:
-    from src.vision.webcam import get_frame
-except ImportError:
-    # Fallback just in case Mridul hasn't pushed this yet!
-    get_frame = lambda: None 
+from src.data.db import create_tables, start_session, log_event, end_session
 
 # --- IMPORT TEAM AI MODELS ---
 from src.vision.face_mesh import get_landmarks
 from src.vision.eye_ear import compute_ear, LEFT_EYE, RIGHT_EYE
 from src.vision.mouth_mar import compute_mar
-
-# NEW IMPORTS: The 3 New Modules!
 from src.vision.head_pose import get_pose
-from src.vision.emotion_detection import detect_emotion
-from src.vision.phone_detector import PhoneDetector
+from src.brain.emotion_detection import detect_emotion
+from src.brain.phone_detector import PhoneDetector
+from src.brain.fusion import calculate_driver_state
 
-# Week 1: Basic App Setup
-st.set_page_config(page_title='Driver Safety')
-st.title('🚗 Driver Safety Co-Pilot')
-# Initialize the session state so Streamlit doesn't panic on first load
-if 'running' not in st.session_state:
-    st.session_state.running = False
+WINDOW_NAME = "Driver Safety Co-Pilot"
+DROWSY_THRESHOLD_FRAMES = 15  # ~0.5s at 30fps of eyes-below-baseline before flagging drowsy
+EMOTION_EVERY_N_FRAMES = 15   # DeepFace is heavy — throttle it
 
-# Week 2: Sidebar UI
-name = st.sidebar.text_input('Your name', 'Driver')
-st.sidebar.markdown("---")
-st.sidebar.subheader("👤 Driver Profile")
+# level names used by fusion.py's status -> beep.py's sound keys
+STATUS_TO_BEEP_LEVEL = {
+    "WARNING": "low",
+    "DROWSY": "medium",
+    "CRITICAL": "critical",
+}
 
-# 1. Try to load an existing profile for this driver
-profile = load_profile(name)
-if profile:
-    st.sidebar.success("✅ Profile Active")
-    # Show the baseline stats to the team!
-    st.sidebar.json(profile) 
-else:
-    st.sidebar.warning("⚠️ No profile found. Please calibrate.")
+_voice_thread = None
 
-# 2. The Calibration Button
-if st.sidebar.button('Calibrate (5s)'):
-    st.sidebar.info("Calibrating... Look straight ahead and act naturally.")
-    
-    # Trigger the upgraded calibration file!
-    new_profile = run_calibration(
-        driver_name=name,
-        duration_sec=5 
-    )
-    
-    st.sidebar.success("Calibration Complete!")
-    time.sleep(2)
-    st.rerun() # Refreshes Streamlit so the new profile loads
-st.sidebar.metric('FPS', '0') # We will calculate this properly later
 
-# --- WEEK 6: MAIN INTEGRATION LOOP ---
-st.markdown("---")
-col1, col2 = st.columns(2)
+def speak_async(message):
+    """Fire voice alert on a background thread so it never blocks the camera loop."""
+    global _voice_thread
+    if _voice_thread is not None and _voice_thread.is_alive():
+        return  # already speaking, don't stack requests
+    _voice_thread = threading.Thread(target=speak_warning, args=(message,), daemon=True)
+    _voice_thread.start()
 
-with col1:
-    if st.button('🟢 Start Driving'):
-        if not profile:
-            st.error("Crucial: You must calibrate your baseline before driving!")
-        else:
-            st.session_state.running = True
-            st.rerun()
 
-with col2:
-    if st.button('🛑 Stop Driving'):
-        st.session_state.running = False
-        st.rerun()
+def sos_async(driver_name):
+    """Twilio call is a blocking network request — fire it off-thread."""
+    threading.Thread(target=send_sos_alert, args=(driver_name,), daemon=True).start()
 
-if st.session_state.running:
-    st.success("Co-Pilot Active. Monitoring driver...")
-    
-    video_placeholder = st.empty()
-    alert_placeholder = st.empty()
-    fps_placeholder = st.sidebar.empty()
+
+def open_camera():
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    
-    drowsy_frames = 0
-    DROWSY_THRESHOLD_FRAMES = 15 
-    
-    # NEW: Yawn Tracking State
-    # ==========================================
-    # PRE-LOOP SETUP (MEMORY & TIMERS)
-    # ==========================================
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    return cap
+
+
+def draw_hud(frame, profile, state, current_emotion, total_yawns, fps):
+    y = 30
+    cv2.putText(frame, f"Driver: {profile['driver']}  FPS: {fps}", (10, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    y += 25
+    color = (0, 255, 0) if state["status"] == "SAFE" else (0, 165, 255) if state["status"] == "WARNING" else (0, 0, 255)
+    cv2.putText(frame, f"Status: {state['status']}  Score: {state['score']}", (10, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+    y += 25
+    if state["reasons"]:
+        cv2.putText(frame, "Reasons: " + ", ".join(state["reasons"]), (10, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+        y += 25
+    cv2.putText(frame, f"Emotion: {current_emotion}  Total yawns: {total_yawns}", (10, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 2)
+    return frame
+
+
+def run_driving_loop(driver_name, profile, cap):
+    session_id = start_session(driver_name)
+    total_alerts = 0
     total_yawns = 0
     is_yawning = False
-    
-    prev_time = time.time()
+    drowsy_frames = 0
+    current_emotion = "Neutral"
+    prev_status = "SAFE"
     frame_count = 0
-    alert_frames = 0 # NEW: This keeps the red alert on screen smoothly!
-    alert_message = ""
+    prev_time = time.time()
+    fps = 0
 
     phone_tracker = PhoneDetector(confidence_threshold=0.5, frame_threshold=10)
-    current_emotion = "Neutral" # Default state
 
-    while cap.isOpened() and st.session_state.running:
+    print("Co-Pilot active. Press 'q' to stop driving.")
+
+    while True:
         ret, frame = cap.read()
         if not ret:
-            st.error("Camera disconnected.")
+            print("Camera disconnected.")
             break
-            
+
         frame_count += 1
-            
+
         # ==========================================
         # 1. RUN THE AI MODELS
         # ==========================================
-        # A. Face Mesh (Eyes & Mouth)
         landmarks = get_landmarks(frame)
-        
+
         if landmarks:
             left = compute_ear(landmarks, LEFT_EYE)
             right = compute_ear(landmarks, RIGHT_EYE)
             current_ear = (left + right) / 2.0
             current_mar = compute_mar(landmarks)
-
-            # B. Head Pose (Distraction)
             pose_result = get_pose(landmarks, frame.shape)
         else:
-            current_ear = profile['ear_mean'] 
+            current_ear = profile['ear_mean']
             current_mar = profile['mar_mean']
             pose_result = None
-            
-        # C. Emotion (Throttled to save FPS!)
-        if frame_count % 15 == 0:
+
+        if frame_count % EMOTION_EVERY_N_FRAMES == 0:
             emotion_data = detect_emotion(frame)
             if emotion_data["emotion"]:
                 current_emotion = emotion_data["emotion"]
 
-        # D. Object Detection (Phone)
-        # ⚠️ WARNING: You need to replace this empty list with your actual YOLO function!
-        # Example: raw_detections = your_yolo_model.predict(frame)
-        raw_detections = [] 
-        phone_data = phone_tracker.detect(raw_detections)
-        # ==========================================
-        # 2. THE BRAIN
-        # ==========================================
-        # Reset alert flag
-        trigger_alert = False
+        # Phone detection: no real object-detection model wired in yet —
+        # kept as an always-empty placeholder on purpose (tracked separately).
+        raw_detections = []
+        phone_result = phone_tracker.detect(raw_detections)
 
-        # Eyes
+        # ==========================================
+        # 2. PERSONALIZED EYE / YAWN CHECKS (against calibrated baseline)
+        # ==========================================
         if current_ear < (profile['ear_mean'] * 0.8):
             drowsy_frames += 1
         else:
-            drowsy_frames = 0 
-            
-        # Mouth
+            drowsy_frames = 0
+        eye_result = {"ear": current_ear, "drowsy": drowsy_frames >= DROWSY_THRESHOLD_FRAMES}
+
         if current_mar > (profile['mar_mean'] * 1.5):
-            if not is_yawning: 
+            if not is_yawning:
                 total_yawns += 1
-                is_yawning = True
+            is_yawning = True
         else:
-            is_yawning = False 
+            is_yawning = False
+        yawn_result = {"mar": current_mar, "yawning": is_yawning}
 
-        # Check Pose (Uses the boolean from head_pose.py)
-        is_distracted = False
-        if pose_result and pose_result["distracted"]:
-            is_distracted = True
-            
-        # ==========================================
-        # 3. FIRE THE ALERTS (STABILIZED)
-        # ==========================================
-        # Determine WHAT to yell at the driver
-        if drowsy_frames >= DROWSY_THRESHOLD_FRAMES:
-            trigger_alert = True
-            alert_message = "🚨 CRITICAL DROWSINESS! WAKE UP! 🚨"
-        elif total_yawns > 3:
-            trigger_alert = True
-            alert_message = "🚨 EXCESSIVE YAWNING! TAKE A BREAK! 🚨"
-            total_yawns = 0 # Reset
-        elif is_distracted:
-            trigger_alert = True
-            alert_message = "⚠️ EYES ON THE ROAD! ⚠️"
-        elif phone_data["phone_detected"]:
-            trigger_alert = True
-            alert_message = "📱 PUT THE PHONE DOWN! 📱"
-        elif current_emotion in ["angry", "sad", "fear"]:
-            trigger_alert = True
-            alert_message = f"🧠 EMOTIONAL STRESS ({current_emotion.upper()}). PULL OVER. 🧠"
+        emotion_result = {"emotion": current_emotion}
 
-        # Timer logic to keep the alert on screen
-        if trigger_alert:
-            alert_frames = 30 
-                
-        if alert_frames > 0:
-            alert_placeholder.error(alert_message)
-            alert_frames -= 1
-        else:
-            alert_placeholder.success(f"✅ Driver alert. Emotion: {current_emotion.title()}")
-            
         # ==========================================
-        # 4. VIDEO & FPS
+        # 3. FUSION — single source of truth for the alert decision
         # ==========================================
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        video_placeholder.image(rgb_frame, channels="RGB", use_column_width=True)
-        
+        state = calculate_driver_state(eye_result, yawn_result, phone_result, pose_result, emotion_result)
+
+        # Fire alerts only on a state change so sounds/voice/db don't spam every frame
+        if state["status"] != prev_status:
+            level = STATUS_TO_BEEP_LEVEL.get(state["status"])
+            if level:
+                play_beep(level)
+            if state["alarm"]:
+                total_alerts += 1
+                log_event(session_id, level or "low", ear=current_ear, mar=current_mar,
+                          yaw=pose_result["yaw"] if pose_result else None,
+                          phone=phone_result["phone_detected"], emotion=current_emotion)
+            if state["status"] == "CRITICAL":
+                speak_async("Warning. Critical driver impairment detected. Please pull over.")
+                sos_async(driver_name)
+        prev_status = state["status"]
+
+        # ==========================================
+        # 4. VIDEO + HUD
+        # ==========================================
         curr_time = time.time()
-        fps = 1 / (curr_time - prev_time + 0.001) 
+        fps = int(1 / (curr_time - prev_time + 0.001))
         prev_time = curr_time
-        
-        if frame_count % 10 == 0:
-            fps_placeholder.metric('FPS', f"{int(fps)}")
 
-    cap.release()
+        draw_hud(frame, profile, state, current_emotion, total_yawns, fps)
+        cv2.imshow(WINDOW_NAME, frame)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+
+    end_session(session_id, total_alerts)
+
+
+def main():
+    create_tables()
+
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)  # resizable/maximizable — image auto-scales to window size
+
+    driver_name = input("Driver name [Driver]: ").strip() or "Driver"
+    cap = open_camera()
+    if not cap.isOpened():
+        print("Error: Could not open webcam (index 0). Is it in use by another app?")
+        return
+
+    profile = load_profile(driver_name)
+    if profile and not profile.get("calibrated", True):
+        print("⚠️  Existing profile was saved without a detected face — recalibrate for accurate results.")
+
+    print(f"\n{'✅ Profile active' if profile else '⚠️  No profile found'} for '{driver_name}'.")
+    print("Controls:  c = calibrate (5s)   s = start driving   q = quit\n")
+
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("Camera disconnected.")
+                break
+
+            label = f"Driver: {driver_name}  |  {'Profile OK' if profile else 'NOT CALIBRATED'}"
+            cv2.putText(frame, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame, "c = calibrate   s = start driving   q = quit", (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 2)
+            cv2.imshow(WINDOW_NAME, frame)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
+            elif key == ord('c'):
+                profile = run_calibration(driver_name, cap, duration_sec=5, window_name=WINDOW_NAME)
+                print("Calibration complete." if profile.get("calibrated") else
+                      "Calibration finished but no face was detected — using generic fallback values.")
+            elif key == ord('s'):
+                if not profile:
+                    print("Crucial: you must calibrate your baseline before driving!")
+                    continue
+                run_driving_loop(driver_name, profile, cap)
+                print("Stopped driving. Press 's' to resume, 'c' to recalibrate, or 'q' to quit.")
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()

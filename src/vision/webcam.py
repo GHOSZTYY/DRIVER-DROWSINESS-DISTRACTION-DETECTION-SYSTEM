@@ -1,10 +1,18 @@
 import cv2
 
 # Open the webcam once and keep it open
-cap = cv2.VideoCapture(0)
+# CAP_DSHOW avoids the multi-second freeze/black-frame issue on Windows
+cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+if not cap.isOpened():
+    print("Error: Could not open webcam (index 0). Is it in use by another app?")
 
 def get_frame():
     """Read a single frame from the webcam. Returns the frame as a NumPy array."""
+    if not cap.isOpened():
+        return None
     ret, frame = cap.read()
     if not ret:
         return None

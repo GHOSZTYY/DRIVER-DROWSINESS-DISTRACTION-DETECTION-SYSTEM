@@ -14,14 +14,14 @@ def compute_mar(landmarks):
     291 -> right mouth corner
     """
 
-    p13 = np.array(landmarks[13])
-    p14 = np.array(landmarks[14])
+    p13 = np.array(landmarks[13][:2])
+    p14 = np.array(landmarks[14][:2])
 
-    p81 = np.array(landmarks[81])
-    p311 = np.array(landmarks[311])
+    p81 = np.array(landmarks[81][:2])
+    p311 = np.array(landmarks[311][:2])
 
-    p61 = np.array(landmarks[61])
-    p291 = np.array(landmarks[291])
+    p61 = np.array(landmarks[61][:2])
+    p291 = np.array(landmarks[291][:2])
 
     vertical_1 = np.linalg.norm(p13 - p14)
     vertical_2 = np.linalg.norm(p81 - p311)

@@ -8,6 +8,7 @@ DB_PATH = os.path.join("data", "sessions", "driver_safety.db")
 
 def get_connection():
     """Open and return a connection to the SQLite database."""
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row  # lets us access columns by name
     return conn

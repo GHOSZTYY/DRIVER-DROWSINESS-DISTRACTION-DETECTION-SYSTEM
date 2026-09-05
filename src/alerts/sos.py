@@ -11,8 +11,8 @@ def send_sos_alert(driver_name="Driver"):
     # Securely fetch the API keys
     account_sid = os.getenv('TWILIO_ACCOUNT_SID')
     auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-    twilio_number = os.getenv('TWILIO_PHONE_NUMBER')
-    destination_number = os.getenv('DESTINATION_PHONE_NUMBER')
+    twilio_number = os.getenv('TWILIO_FROM')
+    destination_number = os.getenv('TWILIO_TO')
 
     # Safety check: Prevent crashes if the .env file is empty
     if not all([account_sid, auth_token, twilio_number, destination_number]):

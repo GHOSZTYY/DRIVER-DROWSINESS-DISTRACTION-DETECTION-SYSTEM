@@ -39,7 +39,8 @@ def detect_emotion(frame):
             "emotion": emotion
         }
 
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ DeepFace emotion detection failed: {e}")
         return {
             "emotion": None
         }

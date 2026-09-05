@@ -1,12 +1,12 @@
 opencv-python
-mediapipe==1.0.1
-numpy
+mediapipe==0.10.14
+numpy==1.26.4
 scipy
 ultralytics==8.4.130
 deepface
-tensorflow==2.21.0
-tf-keras
-protobuf==7.36.0
+tensorflow==2.16.1
+tf-keras==2.16.0
+protobuf==4.25.3
 pygame
 pyttsx3
 twilio

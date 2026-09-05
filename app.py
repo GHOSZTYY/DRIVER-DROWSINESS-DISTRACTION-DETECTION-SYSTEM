@@ -12,7 +12,7 @@ if not hasattr(tf, "__version__"):
 import cv2
 import time
 import threading
-
+from src.vision.phone_yolo import get_detections
 from src.alerts.sos import send_sos_alert
 from src.alerts.beep import play_beep
 from src.alerts.voice import speak_warning
@@ -128,7 +128,7 @@ def run_driving_loop(driver_name, profile, cap):
 
         # Phone detection: no real object-detection model wired in yet —
         # kept as an always-empty placeholder on purpose (tracked separately).
-        raw_detections = []
+        raw_detections = get_detections(frame)
         phone_result = phone_tracker.detect(raw_detections)
 
         # ==========================================

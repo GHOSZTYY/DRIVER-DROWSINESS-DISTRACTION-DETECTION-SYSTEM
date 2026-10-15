@@ -332,5 +332,5 @@ the history back, ready for a dashboard.
 | Member | GitHub |
 |---|---|
 | Mridul Binjrajka | [@GHOSZTYY](https://github.com/GHOSZTYY) |
-| Sarthak Khandelwal | — |
+| Sarthak Khandelwal | [@sarthak-k08](https://github.com/sarthak-k08) |
 | Samridhi Kumari | — |

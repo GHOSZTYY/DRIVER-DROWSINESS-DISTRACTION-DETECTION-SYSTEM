@@ -25,8 +25,7 @@ from src.vision.eye_ear import compute_ear, LEFT_EYE, RIGHT_EYE
 from src.vision.mouth_mar import compute_mar
 from src.vision.head_pose import get_pose
 from src.brain.emotion_detection import detect_emotion
-from src.brain.phone_detector import PhoneDetector
-from src.brain.fusion import calculate_driver_state
+from src.brain.fusion import calculate_driver_state, PHONE_WARNING_SEC
 
 WINDOW_NAME = "Driver Safety Co-Pilot"
 EMOTION_EVERY_N_FRAMES = 15   # DeepFace is heavy — throttle it
@@ -34,20 +33,24 @@ EMOTION_EVERY_N_FRAMES = 15   # DeepFace is heavy — throttle it
 # level names used by fusion.py's status -> beep.py's sound keys
 STATUS_TO_BEEP_LEVEL = {
     "WARNING": "low",
-    "DROWSY": "medium",
+    "DANGER": "medium",
     "CRITICAL": "critical",
 }
 
 # Higher number = more serious; used to spot when things get worse
-STATUS_RANK = {"SAFE": 0, "WARNING": 1, "DROWSY": 2, "CRITICAL": 3}
+STATUS_RANK = {"SAFE": 0, "WARNING": 1, "DANGER": 2, "CRITICAL": 3}
 
-# A single short beep is easy to sleep through, so DROWSY/CRITICAL keep
+# A single short beep is easy to sleep through, so DANGER/CRITICAL keep
 # repeating until the driver recovers. WARNING still beeps only once.
-BEEP_REPEAT_SEC = {"DROWSY": 2.0, "CRITICAL": 1.0}
+BEEP_REPEAT_SEC = {"DANGER": 2.0, "CRITICAL": 1.0}
 MIN_BEEP_GAP_SEC = 1.0   # never beep more often than this, even if the status flickers
 VOICE_REPEAT_SEC = 6.0   # spoken warning repeats this often while CRITICAL
 EPISODE_END_SEC = 3.0    # calm this long before a new alert is logged again
 VOICE_WARNING = "Warning. Critical driver impairment detected. Please pull over."
+
+# YOLO often misses a held phone for a frame or two, so the phone timer only
+# resets after the phone has been gone this long.
+PHONE_GRACE_SEC = 1.0
 
 _voice_thread = None
 
@@ -79,7 +82,8 @@ def draw_hud(frame, profile, state, current_emotion, total_yawns, fps):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     y += 25
     color = (0, 255, 0) if state["status"] == "SAFE" else (0, 165, 255) if state["status"] == "WARNING" else (0, 0, 255)
-    cv2.putText(frame, f"Status: {state['status']}  Score: {state['score']}", (10, y),
+    cause = f" ({state['cause']})" if state.get("cause") else ""
+    cv2.putText(frame, f"Status: {state['status']}{cause}  Score: {state['score']}", (10, y),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     y += 25
     if state["reasons"]:
@@ -101,14 +105,15 @@ def run_driving_loop(driver_name, profile, cap):
     prev_status = "SAFE"
     frame_count = 0
     no_face_since = None  # time the face was first lost; None while it's visible
+    away_since = None     # time the head first turned away; None while facing the road
+    phone_since = None    # time a phone was first seen; None when no phone
+    phone_last_seen = None
     last_beep_at = float("-inf")
     last_voice_at = float("-inf")
     episode_peak = None   # worst status logged in the current alert episode; None when calm
-    calm_since = None     # when the driver last dropped out of DROWSY/CRITICAL
+    calm_since = None     # when the driver last dropped out of DANGER/CRITICAL
     prev_time = time.time()
     fps = 0
-
-    phone_tracker = PhoneDetector(confidence_threshold=0.5, frame_threshold=10)
 
     print("Co-Pilot active. Press 'q' to stop driving.")
 
@@ -150,8 +155,30 @@ def run_driving_loop(driver_name, profile, cap):
 
         # Phone detection: no real object-detection model wired in yet —
         # kept as an always-empty placeholder on purpose (tracked separately).
+        # get_detections already keeps only "cell phone" boxes at confidence 0.5+.
+        # Timed in seconds, with a short grace period for missed frames.
         raw_detections = get_detections(frame)
-        phone_result = phone_tracker.detect(raw_detections)
+        if raw_detections:
+            phone_last_seen = time.time()
+            if phone_since is None:
+                phone_since = phone_last_seen
+        elif phone_since is not None and time.time() - phone_last_seen > PHONE_GRACE_SEC:
+            phone_since = None
+        # first sighting -> latest sighting, so the grace period itself doesn't add time
+        phone_sec = phone_last_seen - phone_since if phone_since is not None else 0.0
+        phone_result = {"seen_sec": phone_sec, "phone_detected": phone_sec >= PHONE_WARNING_SEC}
+
+        # Looking away, timed in seconds. With no face the timer keeps running
+        # (a head turned far enough loses the face) and the face timer adds
+        # its own points.
+        if pose_result is not None:
+            if pose_result["looking_away"]:
+                if away_since is None:
+                    away_since = time.time()
+            else:
+                away_since = None
+        away_sec = time.time() - away_since if away_since is not None else 0.0
+        head_result = {"away_sec": away_sec}
 
         # ==========================================
         # 2. PERSONALIZED EYE / YAWN CHECKS (against calibrated baseline)
@@ -183,7 +210,7 @@ def run_driving_loop(driver_name, profile, cap):
         # ==========================================
         # 3. FUSION — single source of truth for the alert decision
         # ==========================================
-        state = calculate_driver_state(eye_result, yawn_result, phone_result, pose_result,
+        state = calculate_driver_state(eye_result, yawn_result, phone_result, head_result,
                                        emotion_result, face_result)
 
         # ==========================================
@@ -195,7 +222,7 @@ def run_driving_loop(driver_name, profile, cap):
         got_worse = STATUS_RANK[status] > STATUS_RANK[prev_status]
 
         # Beep right away when things get worse, then keep repeating for as
-        # long as DROWSY/CRITICAL lasts.
+        # long as DANGER/CRITICAL lasts.
         repeat_sec = BEEP_REPEAT_SEC.get(status)
         since_beep = now - last_beep_at
         if level and since_beep >= MIN_BEEP_GAP_SEC and (

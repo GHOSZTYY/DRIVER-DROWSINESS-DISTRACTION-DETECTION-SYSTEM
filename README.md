@@ -35,7 +35,7 @@ webcam, speakers, and (optionally) a Twilio account for SOS messages.
 | **Eye closure** | Eye Aspect Ratio (EAR) from 6 landmarks per eye, compared with the driver's calibrated baseline | `src/vision/eye_ear.py` |
 | **Yawning** | Mouth Aspect Ratio (MAR) from 6 mouth landmarks, compared with the calibrated baseline | `src/vision/mouth_mar.py` |
 | **Looking away** | Head yaw / pitch from a 6-point PnP solve (OpenCV `solvePnP`) | `src/vision/head_pose.py` |
-| **Phone usage** | YOLOv8n object detection, restricted to the COCO "cell phone" class | `src/vision/phone_yolo.py`, `src/brain/phone_detector.py` |
+| **Phone usage** | YOLOv8n object detection, restricted to the COCO "cell phone" class, timed in seconds | `src/vision/phone_yolo.py` |
 | **Emotional state** | DeepFace emotion analysis (angry, fear, sad, surprise raise the risk) | `src/brain/emotion_detection.py` |
 
 All face-based signals come from **MediaPipe Face Landmarker** (478 facial
@@ -71,7 +71,7 @@ landmarks per frame).
 4. **Fuse** — `src/brain/fusion.py` adds up weighted points from every signal
    into one score and maps it to a status.
 5. **Act** — a beep plays as soon as the status gets worse, and keeps
-   repeating while the driver stays `DROWSY` or `CRITICAL`, so a single short
+   repeating while the driver stays `DANGER` or `CRITICAL`, so a single short
    beep can't be slept through. Voice and SMS run on background threads so
    the video never freezes.
 6. **Record** — each session and every alert are written to a local SQLite
@@ -89,11 +89,18 @@ The fusion engine gives points for each active warning sign:
 | Face not visible for 2–5 seconds | +5 |
 | Eyes closed for 3+ seconds (EAR below 80% of baseline) | +8 |
 | Eyes closed for 1.5–3 seconds | +5 |
-| Phone in view (10+ consecutive frames, confidence ≥ 0.5) | +3 |
+| Looking away for 4+ seconds (yaw > 25° or pitch > 20°) | +8 |
+| Looking away for 2–4 seconds | +5 |
+| Phone in view for 5+ seconds (confidence ≥ 0.5) | +5 |
+| Phone in view for 1–5 seconds | +3 |
 | Yawning (MAR above 150% of baseline) | +2 |
-| Looking away (yaw > 25° or pitch > 20° for 45+ frames) | +2 |
 | Emotion: angry or fear | +2 |
 | Emotion: sad or surprise | +1 |
+
+Emotion can add to an alarm that other signs already caused, but it can never
+start one: if the other signs are below 5 points, emotion can only raise the
+total to 4 (`WARNING`). A phone alone never goes past `DANGER`; looking down at
+it adds the looking-away points on top.
 
 The total score sets the driver's status:
 
@@ -101,16 +108,20 @@ The total score sets the driver's status:
 |---|---|---|
 | 0 | `SAFE` | Nothing — green HUD |
 | 1 – 4 | `WARNING` | Soft beep (once) |
-| 5 – 7 | `DROWSY` | Medium beep, repeated every 2 s while it lasts; event logged |
+| 5 – 7 | `DANGER` | Medium beep, repeated every 2 s while it lasts; event logged |
 | 8+ | `CRITICAL` | Loud beep every 1 s, spoken "please pull over" warning every 6 s, SOS SMS, event logged |
 
 History gets one entry when an alert starts and one more if it gets worse
-(`DROWSY` → `CRITICAL`). Flickering in and out of an alert doesn't add
+(`DANGER` → `CRITICAL`). Flickering in and out of an alert doesn't add
 entries; a new alert is only logged after 3 seconds of calm.
 
-The on-screen HUD shows the driver name, FPS, current status and score, the
-reasons behind it (for example `Eyes closed, Yawning`), the latest emotion,
-and the total number of yawns this session.
+Every alert also gets a **cause**: `Drowsiness` (eyes closed, face not
+visible, yawning), `Distraction` (phone, looking away) or both.
+
+The on-screen HUD shows the driver name, FPS, current status with its cause
+and score (for example `DANGER (Distraction)  Score: 5`), the reasons behind
+it (for example `Phone detected, Looking away`), the latest emotion, and the
+total number of yawns this session.
 
 ---
 
@@ -167,9 +178,9 @@ recalibrate.
     │   ├── phone_yolo.py       # YOLOv8n "cell phone" detections
     │   └── calibration.py      # Per-driver baseline recording and loading
     ├── brain/
-    │   ├── phone_detector.py   # Turns raw detections into a stable phone flag
+    │   ├── phone_detector.py   # Frame-count phone flag (used by phone_yolo.py's test mode)
     │   ├── emotion_detection.py# DeepFace dominant emotion
-    │   └── fusion.py           # Weighted score -> SAFE / WARNING / DROWSY / CRITICAL
+    │   └── fusion.py           # Weighted score -> SAFE / WARNING / DANGER / CRITICAL
     ├── alerts/
     │   ├── beep.py             # Plays the three alert sounds
     │   ├── voice.py            # Spoken warnings
@@ -306,9 +317,12 @@ the history back, ready for a dashboard.
 
 | Setting | File | Default | Meaning |
 |---|---|---|---|
-| `EYES_CLOSED_DROWSY_SEC` / `EYES_CLOSED_CRITICAL_SEC` | `src/brain/fusion.py` | 1.5 s / 3 s | Eyes-closed time before DROWSY / CRITICAL |
-| `NO_FACE_DROWSY_SEC` / `NO_FACE_CRITICAL_SEC` | `src/brain/fusion.py` | 2 s / 5 s | Face-missing time before DROWSY / CRITICAL |
-| `BEEP_REPEAT_SEC` | `app.py` | DROWSY 2 s, CRITICAL 1 s | How often the beep repeats while the alert lasts |
+| `EYES_CLOSED_DANGER_SEC` / `EYES_CLOSED_CRITICAL_SEC` | `src/brain/fusion.py` | 1.5 s / 3 s | Eyes-closed time before DANGER / CRITICAL |
+| `NO_FACE_DANGER_SEC` / `NO_FACE_CRITICAL_SEC` | `src/brain/fusion.py` | 2 s / 5 s | Face-missing time before DANGER / CRITICAL |
+| `LOOKING_AWAY_DANGER_SEC` / `LOOKING_AWAY_CRITICAL_SEC` | `src/brain/fusion.py` | 2 s / 4 s | Looking-away time before DANGER / CRITICAL |
+| `PHONE_WARNING_SEC` / `PHONE_DANGER_SEC` | `src/brain/fusion.py` | 1 s / 5 s | Phone-in-view time before WARNING / DANGER |
+| `PHONE_GRACE_SEC` | `app.py` | 1 s | How long the phone can go undetected before its timer resets |
+| `BEEP_REPEAT_SEC` | `app.py` | DANGER 2 s, CRITICAL 1 s | How often the beep repeats while the alert lasts |
 | `VOICE_REPEAT_SEC` | `app.py` | 6 s | How often the spoken warning repeats while CRITICAL |
 | `MIN_BEEP_GAP_SEC` | `app.py` | 1 s | Shortest time between two beeps |
 | `EPISODE_END_SEC` | `app.py` | 3 s | Calm time before a new alert is logged again |
@@ -316,23 +330,22 @@ the history back, ready for a dashboard.
 | EAR ratio | `app.py` | 0.8 × baseline | Below this counts as closing |
 | MAR ratio | `app.py` | 1.5 × baseline | Above this counts as a yawn |
 | `YAW_THRESHOLD` / `PITCH_THRESHOLD` | `src/vision/head_pose.py` | 25° / 20° | Head turn limits |
-| `DISTRACT_FRAMES` | `src/vision/head_pose.py` | 45 | Frames of looking away before flagging |
 | `CAMERA_PITCH_OFFSET` | `src/vision/head_pose.py` | 25° | Compensates for a camera mounted above eye level — set to 0 for a camera at eye level |
-| Phone thresholds | `app.py` (`PhoneDetector`) | conf 0.5, 10 frames | Phone confidence and persistence |
+| Phone confidence | `src/vision/phone_yolo.py` | 0.5 | Minimum YOLO confidence for a phone box |
 | Score bands | `src/brain/fusion.py` | 0 / 1–4 / 5–7 / 8+ | Status boundaries |
 
 ---
 
 ## Known limitations
 
-- The phone and head-pose checks still count frames and assume roughly
-  30 FPS; on slower machines the real time before those alerts is longer.
-  (Eye and face checks use real seconds.)
 - A face hidden for 2+ seconds for an innocent reason (drinking from a bottle,
-  a long look over the shoulder) is still treated as `DROWSY`, and 5+ seconds
+  a long look over the shoulder) is still treated as `DANGER`, and 5+ seconds
   as `CRITICAL`, because the system cannot tell this apart from a head drop.
 - Squinting (bright sun, laughing hard) can look like closed eyes; held for
-  1.5+ seconds it raises a false `DROWSY`.
+  1.5+ seconds it raises a false `DANGER`.
+- The phone check can't tell whose phone it is: a phone mounted on the
+  dashboard for navigation, or a passenger's phone, counts as phone use and
+  raises `DANGER` after 5 seconds.
 - Head-pose thresholds assume the camera is roughly in front of the driver;
   `CAMERA_PITCH_OFFSET` must match the actual mounting angle.
 - Emotion recognition from a single webcam frame is noisy and is only used as

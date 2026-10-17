@@ -114,7 +114,8 @@ def get_pose(landmarks, frame_shape):
         "pitch":      round(float(pitch), 2),
         "yaw":        round(float(yaw),   2),
         "roll":       round(float(roll),  2),
-        "distracted": distracted
+        "looking_away": looking_away,  # this frame only — app.py times it in seconds
+        "distracted": distracted       # 45-frame streak, used by this file's own test mode
     }
 
 

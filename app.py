@@ -26,6 +26,7 @@ from src.vision.mouth_mar import compute_mar
 from src.vision.head_pose import get_pose
 from src.brain.emotion_detection import detect_emotion
 from src.brain.fusion import calculate_driver_state, PHONE_WARNING_SEC
+from src.brain.phone_filter import PhoneFilter
 
 WINDOW_NAME = "Driver Safety Co-Pilot"
 EMOTION_EVERY_SEC = 2.0   # DeepFace is heavy — run it in the background this often
@@ -141,6 +142,7 @@ def run_driving_loop(driver_name, profile, cap):
     away_since = None     # time the head first turned away; None while facing the road
     phone_since = None    # time a phone was first seen; None when no phone
     phone_last_seen = None
+    phone_filter = PhoneFilter()  # ignores mounted phones and the passenger's phone
     last_beep_at = float("-inf")
     last_voice_at = float("-inf")
     episode_peak = None   # worst status logged in the current alert episode; None when calm
@@ -193,12 +195,14 @@ def run_driving_loop(driver_name, profile, cap):
         # get_detections already keeps only "cell phone" boxes at confidence 0.5+.
         # Timed in seconds, with a short grace period for missed frames.
         raw_detections = get_detections(frame)
-        if raw_detections:
+        driver_phone = phone_filter.update(raw_detections, landmarks, frame.shape[1], time.time())
+        if driver_phone:
             phone_last_seen = time.time()
             if phone_since is None:
                 phone_since = phone_last_seen
         elif phone_since is not None and time.time() - phone_last_seen > PHONE_GRACE_SEC:
             phone_since = None
+            phone_filter.lost()
         # first sighting -> latest sighting, so the grace period itself doesn't add time
         phone_sec = phone_last_seen - phone_since if phone_since is not None else 0.0
         phone_result = {"seen_sec": phone_sec, "phone_detected": phone_sec >= PHONE_WARNING_SEC}

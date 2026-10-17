@@ -35,7 +35,7 @@ webcam, speakers, and (optionally) a Twilio account for SOS messages.
 | **Eye closure** | Eye Aspect Ratio (EAR) from 6 landmarks per eye, compared with the driver's calibrated baseline | `src/vision/eye_ear.py` |
 | **Yawning** | Mouth Aspect Ratio (MAR) from the inner lip edge (3 upper/lower pairs over the mouth width); the mouth must stay wide open for 1.5 s | `src/vision/mouth_mar.py` |
 | **Looking away** | Head yaw / pitch from a 6-point PnP solve (OpenCV `solvePnP`), measured relative to the driver's calibrated straight-ahead position | `src/vision/head_pose.py` |
-| **Phone usage** | YOLOv8n object detection, restricted to the COCO "cell phone" class, timed in seconds | `src/vision/phone_yolo.py` |
+| **Phone usage** | YOLOv8n object detection, restricted to the COCO "cell phone" class, timed in seconds; mounted phones and phones out of the driver's reach are ignored | `src/vision/phone_yolo.py`, `src/brain/phone_filter.py` |
 | **Emotional state** | DeepFace emotion analysis (angry, fear, sad, surprise raise the risk) | `src/brain/emotion_detection.py` |
 
 All face-based signals come from **MediaPipe Face Landmarker** (478 facial
@@ -195,6 +195,7 @@ version of the app are ignored and the driver is asked to recalibrate.
     │   └── calibration.py      # Per-driver baseline recording and loading
     ├── brain/
     │   ├── phone_detector.py   # Frame-count phone flag (used by phone_yolo.py's test mode)
+    │   ├── phone_filter.py     # Ignores mounted phones and the passenger's phone
     │   ├── emotion_detection.py# DeepFace dominant emotion
     │   └── fusion.py           # Weighted score -> SAFE / WARNING / DANGER / CRITICAL
     ├── alerts/
@@ -350,6 +351,8 @@ the history back, ready for a dashboard.
 | `YAW_THRESHOLD` / `PITCH_THRESHOLD` | `src/vision/head_pose.py` | 25° / 20° | Head turn limits |
 | `CAMERA_PITCH_OFFSET` | `src/vision/head_pose.py` | 25° | Only used by `head_pose.py`'s own test mode; the app uses each driver's calibrated head angle instead |
 | Phone confidence | `src/vision/phone_yolo.py` | 0.5 | Minimum YOLO confidence for a phone box |
+| `MOUNTED_STILL_SEC` / `MOUNTED_MAX_MOVE` | `src/brain/phone_filter.py` | 4 s / 2% of frame width | A phone that stays this still this long is treated as mounted and ignored |
+| `PHONE_REACH` | `src/brain/phone_filter.py` | 1 face width | Phones further than this to the side of the driver's face are ignored (passenger) |
 | Score bands | `src/brain/fusion.py` | 0 / 1–4 / 5–7 / 8+ | Status boundaries |
 
 ---
@@ -364,9 +367,11 @@ the history back, ready for a dashboard.
   wide open is therefore flagged about 6 seconds later than usual.
 - Squinting (bright sun, laughing hard) can look like closed eyes; held for
   1.5+ seconds it raises a false `DANGER`.
-- The phone check can't tell whose phone it is: a phone mounted on the
-  dashboard for navigation, or a passenger's phone, counts as phone use and
-  raises `DANGER` after 5 seconds.
+- Telling a held phone from a mounted one relies on movement: a phone held
+  perfectly still for 4 seconds (e.g. resting on the steering wheel) is
+  treated as mounted. A mounted phone gives one `WARNING` beep at the start
+  of a drive before it is recognised. The passenger check only uses sideways
+  distance from the driver's face, so a passenger leaning close counts.
 - Head-pose angles are relative to the position recorded during calibration;
   if the camera is moved, the driver must recalibrate.
 - Emotion recognition from a single webcam frame is noisy and is only used as

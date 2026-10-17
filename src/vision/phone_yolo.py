@@ -16,8 +16,9 @@ def get_detections(frame, confidence_threshold=0.5):
     Run YOLO object detection on a frame, restricted to the "cell phone" class.
 
     Input:  frame — webcam image (NumPy array, BGR)
-    Output: list of { "label": str, "confidence": float } — shape expected by
-            PhoneDetector.detect() in src/brain/phone_detector.py
+    Output: list of { "label": str, "confidence": float, "box": (x1, y1, x2, y2) }
+            — box in pixels; used by src/brain/phone_filter.py to tell a
+            held phone from a mounted or passenger's phone
     """
     results = _model.predict(
         frame,
@@ -32,6 +33,7 @@ def get_detections(frame, confidence_threshold=0.5):
             detections.append({
                 "label": _model.names[int(box.cls[0])],
                 "confidence": float(box.conf[0]),
+                "box": tuple(float(v) for v in box.xyxy[0]),
             })
     return detections
 

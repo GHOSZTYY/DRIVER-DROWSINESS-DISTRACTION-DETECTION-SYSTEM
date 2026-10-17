@@ -108,13 +108,14 @@ The total score sets the driver's status:
 | Score | Status | What happens |
 |---|---|---|
 | 0 | `SAFE` | Nothing — green HUD |
-| 1 – 4 | `WARNING` | Soft beep (once) |
+| 1 – 4 | `WARNING` | Soft beep (once); event logged |
 | 5 – 7 | `DANGER` | Medium beep, repeated every 2 s while it lasts; event logged |
 | 8+ | `CRITICAL` | Loud beep every 1 s, spoken "please pull over" warning every 6 s, SOS SMS, event logged |
 
-History gets one entry when an alert starts and one more if it gets worse
-(`DANGER` → `CRITICAL`). Flickering in and out of an alert doesn't add
-entries; a new alert is only logged after 3 seconds of calm.
+History gets one entry when an episode starts (`WARNING` or worse) and one
+more each time it gets worse (`WARNING` → `DANGER` → `CRITICAL`). Flickering
+in and out doesn't add entries; a new episode is only logged after 3 seconds
+of calm. A `WARNING` caused only by an emotion guess isn't logged.
 
 Every alert also gets a **cause**: `Drowsiness` (eyes closed, face not
 visible, yawning), `Distraction` (phone, looking away) or both.
@@ -314,7 +315,7 @@ Database file: `data/sessions/driver_safety.db`
 | `started_at`, `ended_at` | ISO timestamps |
 | `total_alerts` | Alerts raised in the session |
 
-**`events`** — one row per alert
+**`events`** — one row per alert episode, plus one each time it gets worse
 
 | Column | Meaning |
 |---|---|
@@ -324,6 +325,12 @@ Database file: `data/sessions/driver_safety.db`
 | `ear_score`, `mar_score`, `yaw_angle` | Readings at that moment |
 | `phone_detected` | 1 if a phone was seen |
 | `emotion_label` | Detected emotion |
+| `cause` | `Drowsiness`, `Distraction` or `Drowsiness + Distraction` |
+| `reasons` | What was detected, e.g. `Eyes closed, Yawning` |
+| `score` | Fusion score at that moment |
+
+Databases created by older versions get the `cause`, `reasons` and `score`
+columns added automatically on start-up; existing rows are kept.
 
 `get_all_sessions()` and `get_events_for_session()` in `src/data/db.py` read
 the history back, ready for a dashboard.

@@ -45,9 +45,18 @@ def create_tables():
             yaw_angle     REAL,
             phone_detected INTEGER DEFAULT 0,
             emotion_label TEXT,
+            cause         TEXT,
+            reasons       TEXT,
+            score         INTEGER,
             FOREIGN KEY (session_id) REFERENCES sessions(id)
         )
     """)
+
+    # Databases created before these columns existed get them added
+    existing = {row["name"] for row in cursor.execute("PRAGMA table_info(events)")}
+    for column, col_type in (("cause", "TEXT"), ("reasons", "TEXT"), ("score", "INTEGER")):
+        if column not in existing:
+            cursor.execute(f"ALTER TABLE events ADD COLUMN {column} {col_type}")
 
     conn.commit()
     conn.close()
@@ -78,7 +87,8 @@ def start_session(driver_name):
 
 
 def log_event(session_id, level, ear=None, mar=None,
-              yaw=None, phone=False, emotion=None):
+              yaw=None, phone=False, emotion=None,
+              cause=None, reasons=None, score=None):
     """
     Log one alert event to the database.
 
@@ -89,6 +99,9 @@ def log_event(session_id, level, ear=None, mar=None,
             yaw        — yaw angle from head_pose.py
             phone      — True/False from phone_detect.py
             emotion    — string from emotion.py e.g. 'angry'
+            cause      — 'Drowsiness', 'Distraction' or 'Drowsiness + Distraction'
+            reasons    — e.g. 'Eyes closed, Yawning'
+            score      — fusion score at that moment
     Output: None (writes to DB)
     """
     conn   = get_connection()
@@ -98,8 +111,9 @@ def log_event(session_id, level, ear=None, mar=None,
         INSERT INTO events
             (session_id, timestamp, alert_level,
              ear_score, mar_score, yaw_angle,
-             phone_detected, emotion_label)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             phone_detected, emotion_label,
+             cause, reasons, score)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         session_id,
         datetime.now().isoformat(),
@@ -108,7 +122,10 @@ def log_event(session_id, level, ear=None, mar=None,
         mar,
         yaw,
         1 if phone else 0,
-        emotion
+        emotion,
+        cause,
+        reasons,
+        score
     ))
 
     conn.commit()

@@ -287,16 +287,21 @@ def run_driving_loop(driver_name, profile, cap):
         if status == "CRITICAL" and prev_status != "CRITICAL":
             sos_async(driver_name)
 
-        # History: one row when an alert episode starts, one more if it
-        # escalates to CRITICAL. Flickering in and out doesn't add rows; the
-        # episode only ends after EPISODE_END_SEC of calm.
-        if state["alarm"]:
+        # History: one row when an episode starts (WARNING or worse) and one
+        # more each time it gets worse (WARNING -> DANGER -> CRITICAL).
+        # Flickering in and out doesn't add rows; the episode only ends after
+        # EPISODE_END_SEC of calm. A WARNING caused only by an emotion guess
+        # isn't logged (it has no cause).
+        if status != "SAFE" and (state["alarm"] or state["cause"]):
             calm_since = None
-            if episode_peak is None or (status == "CRITICAL" and episode_peak != "CRITICAL"):
-                total_alerts += 1
+            if episode_peak is None or STATUS_RANK[status] > STATUS_RANK[episode_peak]:
+                if state["alarm"]:
+                    total_alerts += 1
                 log_event(session_id, level, ear=current_ear, mar=current_mar,
                           yaw=pose_result["yaw"] if pose_result else None,
-                          phone=phone_result["phone_detected"], emotion=current_emotion)
+                          phone=phone_result["phone_detected"], emotion=current_emotion,
+                          cause=state["cause"], reasons=", ".join(state["reasons"]),
+                          score=state["score"])
                 episode_peak = status
         elif episode_peak is not None:
             if calm_since is None:

@@ -117,6 +117,12 @@ more each time it gets worse (`WARNING` → `DANGER` → `CRITICAL`). Flickering
 in and out doesn't add entries; a new episode is only logged after 3 seconds
 of calm. A `WARNING` caused only by an emotion guess isn't logged.
 
+If the camera disconnects during a drive, monitoring doesn't stop: the app
+shows `CAMERA LOST`, sounds the critical beep every 2 s, says "the driver
+monitoring camera is disconnected" (repeated every 6 s), logs the event
+(cause `Camera`) and tries to reopen the camera every 2 s until it's back.
+No SOS is sent for this.
+
 Every alert also gets a **cause**: `Drowsiness` (eyes closed, face not
 visible, yawning), `Distraction` (phone, looking away) or both.
 
@@ -269,14 +275,14 @@ python app.py
 2. Press **`c`** to calibrate — look straight ahead and act naturally for
    5 seconds.
 3. Press **`s`** to start the driving session.
-4. Press **`q`** to stop driving and return to the menu; press **`q`** again
-   to quit.
+4. Press **`q` twice within 3 seconds** to stop driving and return to the
+   menu (one stray press does nothing); press **`q`** in the menu to quit.
 
 | Key | Where | Action |
 |---|---|---|
 | `c` | Menu | Calibrate (5 s baseline) |
 | `s` | Menu | Start driving (needs a profile) |
-| `q` | Driving | Stop and return to menu |
+| `q` `q` | Driving | Stop and return to menu (second press within 3 s) |
 | `q` | Menu | Quit |
 
 Start-up takes around 15 seconds while TensorFlow, DeepFace and YOLO load.

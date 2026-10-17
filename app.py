@@ -10,6 +10,7 @@ if not hasattr(tf, "__version__"):
 # ------------------------
 
 import cv2
+import numpy as np
 import time
 import threading
 from src.vision.phone_yolo import get_detections
@@ -64,6 +65,16 @@ YAWN_MIN_SEC = 1.5
 # like closing eyes. Eye closure is ignored while the mouth is yawning-wide,
 # but only for this long, so sleeping with the jaw dropped open is still caught.
 YAWN_EYE_IGNORE_SEC = 6.0
+
+# Camera lost mid-drive: keep alarming and try to reconnect instead of quietly
+# stopping (a blind monitor is unsafe). Not an SOS - the driver may be fine.
+CAMERA_RETRY_SEC = 2.0     # try to reopen the camera this often
+CAMERA_BEEP_SEC = 2.0      # alarm beep repeats this often while it's lost
+CAMERA_VOICE = "Warning. The driver monitoring camera is disconnected."
+
+# Stopping the monitor needs 'q' twice within this many seconds, so a stray
+# key press can't switch it off.
+QUIT_CONFIRM_SEC = 3.0
 
 # YOLO often misses a held phone for a frame or two, so the phone timer only
 # resets after the phone has been gone this long.
@@ -132,6 +143,8 @@ def draw_hud(frame, profile, state, current_emotion, total_yawns, fps):
 
 
 def run_driving_loop(driver_name, profile, cap):
+    """Runs one drive. Returns the camera capture, which may have been
+    reopened if the camera disconnected during the drive."""
     session_id = start_session(driver_name)
     total_alerts = 0
     total_yawns = 0
@@ -157,13 +170,50 @@ def run_driving_loop(driver_name, profile, cap):
     prev_time = time.time()
     fps = 0
 
-    print("Co-Pilot active. Press 'q' to stop driving.")
+    camera_lost_since = None
+    last_camera_retry = float("-inf")
+    quit_pressed_at = float("-inf")
+
+    print("Co-Pilot active. Press 'q' twice to stop driving.")
 
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("Camera disconnected.")
-            break
+            # ==========================================
+            # CAMERA LOST: alarm, keep trying to reconnect
+            # ==========================================
+            now = time.time()
+            if camera_lost_since is None:
+                camera_lost_since = now
+                print("Camera disconnected - trying to reconnect...")
+                log_event(session_id, "critical", cause="Camera",
+                          reasons="Camera disconnected")
+            if now - last_beep_at >= CAMERA_BEEP_SEC:
+                play_beep("critical")
+                last_beep_at = now
+            if now - last_voice_at >= VOICE_REPEAT_SEC:
+                speak_async(CAMERA_VOICE)
+                last_voice_at = now
+            if now - last_camera_retry >= CAMERA_RETRY_SEC:
+                last_camera_retry = now
+                cap.release()
+                cap = open_camera()
+
+            blank = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(blank, f"CAMERA LOST - reconnecting ({now - camera_lost_since:.0f}s)",
+                        (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            cv2.imshow(WINDOW_NAME, blank)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                if now - quit_pressed_at <= QUIT_CONFIRM_SEC:
+                    break
+                quit_pressed_at = now
+            prev_status = "SAFE"
+            continue
+
+        if camera_lost_since is not None:
+            print(f"Camera reconnected after {time.time() - camera_lost_since:.0f}s.")
+            camera_lost_since = None
 
         # ==========================================
         # 1. RUN THE AI MODELS
@@ -334,13 +384,21 @@ def run_driving_loop(driver_name, profile, cap):
         prev_time = curr_time
 
         draw_hud(frame, profile, state, current_emotion, total_yawns, fps)
+        if time.time() - quit_pressed_at <= QUIT_CONFIRM_SEC:
+            cv2.putText(frame, "Press q again to STOP monitoring", (10, 460),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         cv2.imshow(WINDOW_NAME, frame)
 
+        # 'q' twice within QUIT_CONFIRM_SEC stops the drive
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
-            break
+            if time.time() - quit_pressed_at <= QUIT_CONFIRM_SEC:
+                break
+            quit_pressed_at = time.time()
+            print("Press 'q' again within 3 s to stop monitoring.")
 
     end_session(session_id, total_alerts)
+    return cap
 
 
 def main():
@@ -387,7 +445,7 @@ def main():
                 if not profile:
                     print("Crucial: you must calibrate your baseline before driving!")
                     continue
-                run_driving_loop(driver_name, profile, cap)
+                cap = run_driving_loop(driver_name, profile, cap)
                 print("Stopped driving. Press 's' to resume, 'c' to recalibrate, or 'q' to quit.")
     finally:
         cap.release()

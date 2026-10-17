@@ -86,7 +86,8 @@ The fusion engine gives points for each active warning sign:
 |---|---|
 | Face not visible for 5+ seconds (head dropped, face covered, camera blocked) | +8 |
 | Face not visible for 2–5 seconds | +5 |
-| Eyes closed (EAR below 80% of baseline for 15+ frames) | +4 |
+| Eyes closed for 3+ seconds (EAR below 80% of baseline) | +8 |
+| Eyes closed for 1.5–3 seconds | +5 |
 | Phone in view (10+ consecutive frames, confidence ≥ 0.5) | +3 |
 | Yawning (MAR above 150% of baseline) | +2 |
 | Looking away (yaw > 25° or pitch > 20° for 45+ frames) | +2 |
@@ -300,7 +301,8 @@ the history back, ready for a dashboard.
 
 | Setting | File | Default | Meaning |
 |---|---|---|---|
-| `DROWSY_THRESHOLD_FRAMES` | `app.py` | 15 | Frames of low EAR before "eyes closed" |
+| `EYES_CLOSED_DROWSY_SEC` / `EYES_CLOSED_CRITICAL_SEC` | `src/brain/fusion.py` | 1.5 s / 3 s | Eyes-closed time before DROWSY / CRITICAL |
+| `NO_FACE_DROWSY_SEC` / `NO_FACE_CRITICAL_SEC` | `src/brain/fusion.py` | 2 s / 5 s | Face-missing time before DROWSY / CRITICAL |
 | `EMOTION_EVERY_N_FRAMES` | `app.py` | 15 | How often DeepFace runs |
 | EAR ratio | `app.py` | 0.8 × baseline | Below this counts as closing |
 | MAR ratio | `app.py` | 1.5 × baseline | Above this counts as a yawn |
@@ -314,13 +316,14 @@ the history back, ready for a dashboard.
 
 ## Known limitations
 
-- Frame-count thresholds assume roughly 30 FPS; on slower machines the real
-  time before an alert is longer.
+- The phone and head-pose checks still count frames and assume roughly
+  30 FPS; on slower machines the real time before those alerts is longer.
+  (Eye and face checks use real seconds.)
 - A face hidden for 2+ seconds for an innocent reason (drinking from a bottle,
   a long look over the shoulder) is still treated as `DROWSY`, and 5+ seconds
   as `CRITICAL`, because the system cannot tell this apart from a head drop.
-- Eyes closed on their own scores 4 points, which is `WARNING`, not `DROWSY`;
-  a second sign (yawn, phone, looking away) is needed to escalate.
+- Squinting (bright sun, laughing hard) can look like closed eyes; held for
+  1.5+ seconds it raises a false `DROWSY`.
 - Head-pose thresholds assume the camera is roughly in front of the driver;
   `CAMERA_PITCH_OFFSET` must match the actual mounting angle.
 - Emotion recognition from a single webcam frame is noisy and is only used as

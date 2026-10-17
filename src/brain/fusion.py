@@ -6,6 +6,12 @@ This module combines the outputs from all detection modules
 Driver Safety Score and determine the driver's state.
 """
 
+# Eyes closed: normal blinks (0.1-0.4s) and slow tired blinks (under ~1s) are
+# ignored; staying closed longer is treated as falling asleep. Shorter than the
+# face limits because closed eyes are stronger proof of sleep than a lost face.
+EYES_CLOSED_DROWSY_SEC = 1.5
+EYES_CLOSED_CRITICAL_SEC = 3.0
+
 # Face not visible: short gaps (blinks, a quick shoulder check, a detection
 # glitch) are ignored; longer gaps are treated as a head drop or a blocked camera.
 NO_FACE_DROWSY_SEC = 2.0
@@ -37,9 +43,16 @@ def calculate_driver_state(
     reasons = []
 
     # Eye Detection
-    if eye_result and eye_result.get("drowsy", False):
-        score += 4
-        reasons.append("Eyes closed")
+    if eye_result:
+        closed_sec = eye_result.get("closed_sec", 0)
+
+        if closed_sec >= EYES_CLOSED_CRITICAL_SEC:
+            score += 8
+            reasons.append("Eyes closed 3s+")
+
+        elif closed_sec >= EYES_CLOSED_DROWSY_SEC:
+            score += 5
+            reasons.append("Eyes closed")
 
     # Yawn Detection
     if yawn_result and yawn_result.get("yawning", False):

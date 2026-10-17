@@ -29,7 +29,6 @@ from src.brain.phone_detector import PhoneDetector
 from src.brain.fusion import calculate_driver_state
 
 WINDOW_NAME = "Driver Safety Co-Pilot"
-DROWSY_THRESHOLD_FRAMES = 15  # ~0.5s at 30fps of eyes-below-baseline before flagging drowsy
 EMOTION_EVERY_N_FRAMES = 15   # DeepFace is heavy — throttle it
 
 # level names used by fusion.py's status -> beep.py's sound keys
@@ -86,7 +85,7 @@ def run_driving_loop(driver_name, profile, cap):
     total_alerts = 0
     total_yawns = 0
     is_yawning = False
-    drowsy_frames = 0
+    eyes_closed_since = None  # time the eyes first closed; None while they're open
     current_emotion = "Neutral"
     prev_status = "SAFE"
     frame_count = 0
@@ -142,14 +141,18 @@ def run_driving_loop(driver_name, profile, cap):
         # ==========================================
         # 2. PERSONALIZED EYE / YAWN CHECKS (against calibrated baseline)
         # ==========================================
-        # With no face the eye streak is kept as it was, so eyes closing and
-        # then the head dropping out of view doesn't wipe the evidence.
+        # Eyes are timed in real seconds (not frames) so the limits mean the
+        # same on a fast or slow computer. With no face the timer keeps
+        # running, so eyes closing and then the head dropping out of view
+        # doesn't wipe the evidence.
         if current_ear is not None:
             if current_ear < (profile['ear_mean'] * 0.8):
-                drowsy_frames += 1
+                if eyes_closed_since is None:
+                    eyes_closed_since = time.time()
             else:
-                drowsy_frames = 0
-        eye_result = {"ear": current_ear, "drowsy": drowsy_frames >= DROWSY_THRESHOLD_FRAMES}
+                eyes_closed_since = None
+        eyes_closed_sec = time.time() - eyes_closed_since if eyes_closed_since is not None else 0.0
+        eye_result = {"ear": current_ear, "closed_sec": eyes_closed_sec}
 
         if current_mar is not None and current_mar > (profile['mar_mean'] * 1.5):
             if not is_yawning:

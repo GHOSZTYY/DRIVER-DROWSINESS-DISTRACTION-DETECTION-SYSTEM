@@ -21,7 +21,7 @@ from src.vision.calibration import run_calibration, load_profile
 from src.data.db import create_tables, start_session, log_event, end_session
 
 # --- IMPORT TEAM AI MODELS ---
-from src.vision.face_mesh import get_landmarks
+from src.vision.face_mesh import get_landmarks, reset as reset_face_tracking
 from src.vision.lighting import detect_face, eyes_covered, light_notice
 from src.vision.eye_ear import compute_ear, LEFT_EYE, RIGHT_EYE
 from src.vision.mouth_mar import compute_mar
@@ -150,6 +150,7 @@ def draw_hud(frame, profile, state, current_emotion, total_yawns, fps, notices=(
 def run_driving_loop(driver_name, profile, cap):
     """Runs one drive. Returns the camera capture, which may have been
     reopened if the camera disconnected during the drive."""
+    reset_face_tracking()  # pick the driver afresh (biggest face) at the start of a drive
     session_id = start_session(driver_name)
     total_alerts = 0
     total_yawns = 0

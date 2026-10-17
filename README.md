@@ -39,7 +39,10 @@ webcam, speakers, and (optionally) a Twilio account for SOS messages.
 | **Emotional state** | DeepFace emotion analysis (angry, fear, sad, surprise raise the risk); only while the face is visible, and only after two readings in a row agree | `src/brain/emotion_detection.py` |
 
 All face-based signals come from **MediaPipe Face Landmarker** (478 facial
-landmarks per frame).
+landmarks per frame). It looks for up to 3 faces and picks the driver: the
+biggest face (closest to the camera) at the start of a drive, and after that
+the face nearest to where the driver was last seen, so a passenger leaning in
+can't take over.
 
 **Lighting and sunglasses** (`src/vision/lighting.py`): if no face is found
 in a dark frame, the app tries again on a brightened copy (CLAHE contrast
@@ -203,7 +206,7 @@ version of the app are ignored and the driver is asked to recalibrate.
 └── src/
     ├── vision/
     │   ├── webcam.py           # Shared webcam helper for module tests
-    │   ├── face_mesh.py        # MediaPipe Face Landmarker wrapper -> landmark dict
+    │   ├── face_mesh.py        # MediaPipe Face Landmarker wrapper; picks the driver's face
     │   ├── eye_ear.py          # Eye Aspect Ratio
     │   ├── mouth_mar.py        # Mouth Aspect Ratio
     │   ├── head_pose.py        # Yaw / pitch / roll via solvePnP

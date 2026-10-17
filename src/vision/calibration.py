@@ -1,4 +1,5 @@
 import json
+import unicodedata
 import time
 import numpy as np
 import os
@@ -29,6 +30,31 @@ MAX_POSE_STD_DEG = 8.0
 
 RAW_POSE = {"pitch": 0.0, "yaw": 0.0}  # baseline that leaves the angles untouched
 
+# The driver name becomes a file name (data/profiles/<name>.json), so only
+# letters, digits, spaces, '-' and '_' are allowed. Anything else, such as
+# '../' or '\\', could write or read files outside the profiles folder.
+MAX_NAME_LENGTH = 40
+_WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"{p}{n}" for p in ("COM", "LPT") for n in range(1, 10)}
+
+
+def valid_driver_name(name):
+    """True if the name is safe to use as a profile file name."""
+    return (
+        isinstance(name, str)
+        and 0 < len(name) <= MAX_NAME_LENGTH
+        and name == name.strip()
+        # letters/digits in any script; category M = vowel signs and accents (e.g. Hindi)
+        and all(ch.isalnum() or unicodedata.category(ch).startswith("M") or ch in " -_"
+                for ch in name)
+        and name.upper() not in _WINDOWS_RESERVED
+    )
+
+
+def _check_name(name):
+    if not valid_driver_name(name):
+        raise ValueError(f"invalid driver name {name!r}: use up to {MAX_NAME_LENGTH} "
+                         "letters, digits, spaces, '-' or '_'")
+
 def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety Co-Pilot"):
     """
     Records driver baselines using the given (already-open) webcam capture
@@ -38,6 +64,7 @@ def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety
     Returns the profile dict. If the recording wasn't good enough,
     "calibrated" is False, "error" says why, and nothing is saved.
     """
+    _check_name(driver_name)
     ear_list = []
     mar_list = []
     pitch_list = []
@@ -120,6 +147,7 @@ def load_profile(driver_name):
     """Reads the JSON profile and returns the dictionary.
     Returns None if there is no profile, or if it was made by an older
     version of the app or without a detected face (it must be redone)."""
+    _check_name(driver_name)
     file_path = f'data/profiles/{driver_name}.json'
     if os.path.exists(file_path):
         with open(file_path, 'r') as f:

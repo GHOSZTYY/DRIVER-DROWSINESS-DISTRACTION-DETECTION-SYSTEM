@@ -284,7 +284,9 @@ database use paths relative to it:
 python app.py
 ```
 
-1. Enter the driver's name (press Enter for `Driver`).
+1. Enter the driver's name (press Enter for `Driver`). Up to 40 letters
+   (any language), digits, spaces, `-` or `_`; the app asks again for
+   anything else, because the name becomes the profile's file name.
 2. Press **`c`** to calibrate — look straight ahead and act naturally for
    5 seconds.
 3. Press **`s`** to start the driving session.

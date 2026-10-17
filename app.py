@@ -17,7 +17,7 @@ from src.vision.phone_yolo import get_detections
 from src.alerts.sos import send_sos_alert
 from src.alerts.beep import play_beep
 from src.alerts.voice import speak_warning
-from src.vision.calibration import run_calibration, load_profile
+from src.vision.calibration import run_calibration, load_profile, valid_driver_name
 from src.data.db import create_tables, start_session, log_event, end_session
 
 # --- IMPORT TEAM AI MODELS ---
@@ -417,7 +417,11 @@ def main():
 
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)  # resizable/maximizable — image auto-scales to window size
 
-    driver_name = input("Driver name [Driver]: ").strip() or "Driver"
+    while True:
+        driver_name = input("Driver name [Driver]: ").strip() or "Driver"
+        if valid_driver_name(driver_name):
+            break
+        print("Please use up to 40 letters, digits, spaces, '-' or '_' (no dots or slashes).")
     cap = open_camera()
     if not cap.isOpened():
         print("Error: Could not open webcam (index 0). Is it in use by another app?")

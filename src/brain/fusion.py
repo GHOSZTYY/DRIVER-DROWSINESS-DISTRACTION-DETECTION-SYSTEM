@@ -6,12 +6,19 @@ This module combines the outputs from all detection modules
 Driver Safety Score and determine the driver's state.
 """
 
+# Face not visible: short gaps (blinks, a quick shoulder check, a detection
+# glitch) are ignored; longer gaps are treated as a head drop or a blocked camera.
+NO_FACE_DROWSY_SEC = 2.0
+NO_FACE_CRITICAL_SEC = 5.0
+
+
 def calculate_driver_state(
     eye_result,
     yawn_result,
     phone_result,
     head_result,
-    emotion_result
+    emotion_result,
+    face_result=None
 ):
     """
     Combines outputs from all detectors and calculates
@@ -48,6 +55,18 @@ def calculate_driver_state(
     if head_result and head_result.get("distracted", False):
         score += 2
         reasons.append("Looking away")
+
+    # Face Not Visible
+    if face_result:
+        missing_sec = face_result.get("missing_sec", 0)
+
+        if missing_sec >= NO_FACE_CRITICAL_SEC:
+            score += 8
+            reasons.append("Face not visible 5s+")
+
+        elif missing_sec >= NO_FACE_DROWSY_SEC:
+            score += 5
+            reasons.append("Face not visible")
 
     # Emotion Detection
     if emotion_result:

@@ -90,6 +90,7 @@ def run_driving_loop(driver_name, profile, cap):
     current_emotion = "Neutral"
     prev_status = "SAFE"
     frame_count = 0
+    no_face_since = None  # time the face was first lost; None while it's visible
     prev_time = time.time()
     fps = 0
 
@@ -111,15 +112,22 @@ def run_driving_loop(driver_name, profile, cap):
         landmarks = get_landmarks(frame)
 
         if landmarks:
+            no_face_since = None
             left = compute_ear(landmarks, LEFT_EYE)
             right = compute_ear(landmarks, RIGHT_EYE)
             current_ear = (left + right) / 2.0
             current_mar = compute_mar(landmarks)
             pose_result = get_pose(landmarks, frame.shape)
         else:
-            current_ear = profile['ear_mean']
-            current_mar = profile['mar_mean']
+            # No face is NOT proof the driver is fine — a head dropping forward
+            # in sleep, a hand over the face or a covered camera all look like
+            # this. Leave the readings empty and time how long it lasts instead.
+            if no_face_since is None:
+                no_face_since = time.time()
+            current_ear = None
+            current_mar = None
             pose_result = None
+        no_face_sec = time.time() - no_face_since if no_face_since is not None else 0.0
 
         if frame_count % EMOTION_EVERY_N_FRAMES == 0:
             emotion_data = detect_emotion(frame)
@@ -134,13 +142,16 @@ def run_driving_loop(driver_name, profile, cap):
         # ==========================================
         # 2. PERSONALIZED EYE / YAWN CHECKS (against calibrated baseline)
         # ==========================================
-        if current_ear < (profile['ear_mean'] * 0.8):
-            drowsy_frames += 1
-        else:
-            drowsy_frames = 0
+        # With no face the eye streak is kept as it was, so eyes closing and
+        # then the head dropping out of view doesn't wipe the evidence.
+        if current_ear is not None:
+            if current_ear < (profile['ear_mean'] * 0.8):
+                drowsy_frames += 1
+            else:
+                drowsy_frames = 0
         eye_result = {"ear": current_ear, "drowsy": drowsy_frames >= DROWSY_THRESHOLD_FRAMES}
 
-        if current_mar > (profile['mar_mean'] * 1.5):
+        if current_mar is not None and current_mar > (profile['mar_mean'] * 1.5):
             if not is_yawning:
                 total_yawns += 1
             is_yawning = True
@@ -149,11 +160,13 @@ def run_driving_loop(driver_name, profile, cap):
         yawn_result = {"mar": current_mar, "yawning": is_yawning}
 
         emotion_result = {"emotion": current_emotion}
+        face_result = {"missing_sec": no_face_sec}
 
         # ==========================================
         # 3. FUSION — single source of truth for the alert decision
         # ==========================================
-        state = calculate_driver_state(eye_result, yawn_result, phone_result, pose_result, emotion_result)
+        state = calculate_driver_state(eye_result, yawn_result, phone_result, pose_result,
+                                       emotion_result, face_result)
 
         # Fire alerts only on a state change so sounds/voice/db don't spam every frame
         if state["status"] != prev_status:

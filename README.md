@@ -84,6 +84,8 @@ The fusion engine gives points for each active warning sign:
 
 | Condition | Points |
 |---|---|
+| Face not visible for 5+ seconds (head dropped, face covered, camera blocked) | +8 |
+| Face not visible for 2–5 seconds | +5 |
 | Eyes closed (EAR below 80% of baseline for 15+ frames) | +4 |
 | Phone in view (10+ consecutive frames, confidence ≥ 0.5) | +3 |
 | Yawning (MAR above 150% of baseline) | +2 |
@@ -314,8 +316,9 @@ the history back, ready for a dashboard.
 
 - Frame-count thresholds assume roughly 30 FPS; on slower machines the real
   time before an alert is longer.
-- When no face is found, the baseline values are used for that frame, so a
-  driver whose face has dropped out of view is not flagged as drowsy.
+- A face hidden for 2+ seconds for an innocent reason (drinking from a bottle,
+  a long look over the shoulder) is still treated as `DROWSY`, and 5+ seconds
+  as `CRITICAL`, because the system cannot tell this apart from a head drop.
 - Eyes closed on their own scores 4 points, which is `WARNING`, not `DROWSY`;
   a second sign (yawn, phone, looking away) is needed to escalate.
 - Head-pose thresholds assume the camera is roughly in front of the driver;

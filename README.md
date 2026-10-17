@@ -33,7 +33,7 @@ webcam, speakers, and (optionally) a Twilio account for SOS messages.
 | Signal | How it is measured | Module |
 |---|---|---|
 | **Eye closure** | Eye Aspect Ratio (EAR) from 6 landmarks per eye, compared with the driver's calibrated baseline | `src/vision/eye_ear.py` |
-| **Yawning** | Mouth Aspect Ratio (MAR) from 6 mouth landmarks, compared with the calibrated baseline | `src/vision/mouth_mar.py` |
+| **Yawning** | Mouth Aspect Ratio (MAR) from the inner lip edge (3 upper/lower pairs over the mouth width); the mouth must stay wide open for 1.5 s | `src/vision/mouth_mar.py` |
 | **Looking away** | Head yaw / pitch from a 6-point PnP solve (OpenCV `solvePnP`), measured relative to the driver's calibrated straight-ahead position | `src/vision/head_pose.py` |
 | **Phone usage** | YOLOv8n object detection, restricted to the COCO "cell phone" class, timed in seconds | `src/vision/phone_yolo.py` |
 | **Emotional state** | DeepFace emotion analysis (angry, fear, sad, surprise raise the risk) | `src/brain/emotion_detection.py` |
@@ -94,7 +94,7 @@ The fusion engine gives points for each active warning sign:
 | Looking away for 2–4 seconds | +5 |
 | Phone in view for 5+ seconds (confidence ≥ 0.5) | +5 |
 | Phone in view for 1–5 seconds | +3 |
-| Yawning (MAR above 150% of baseline) | +2 |
+| Yawning (inner-lip MAR above 0.32, or baseline + 0.25 if higher, held for 1.5+ seconds) | +2 |
 | Emotion: angry or fear | +2 |
 | Emotion: sad or surprise | +1 |
 
@@ -344,7 +344,9 @@ the history back, ready for a dashboard.
 | `EPISODE_END_SEC` | `app.py` | 3 s | Calm time before a new alert is logged again |
 | `EMOTION_EVERY_SEC` | `app.py` | 2 s | How often DeepFace runs (in the background) |
 | EAR ratio | `app.py` | 0.8 × baseline | Below this counts as closing |
-| MAR ratio | `app.py` | 1.5 × baseline | Above this counts as a yawn |
+| `YAWN_MIN_MAR` / `YAWN_ABOVE_BASELINE` | `app.py` | 0.32 / +0.25 | Mouth openness that counts as yawn-wide |
+| `YAWN_MIN_SEC` | `app.py` | 1.5 s | How long the mouth must stay yawn-wide (filters out talking) |
+| `YAWN_EYE_IGNORE_SEC` | `app.py` | 6 s | Eye closure is ignored this long during a yawn (eyes squint when yawning) |
 | `YAW_THRESHOLD` / `PITCH_THRESHOLD` | `src/vision/head_pose.py` | 25° / 20° | Head turn limits |
 | `CAMERA_PITCH_OFFSET` | `src/vision/head_pose.py` | 25° | Only used by `head_pose.py`'s own test mode; the app uses each driver's calibrated head angle instead |
 | Phone confidence | `src/vision/phone_yolo.py` | 0.5 | Minimum YOLO confidence for a phone box |
@@ -357,6 +359,9 @@ the history back, ready for a dashboard.
 - A face hidden for 2+ seconds for an innocent reason (drinking from a bottle,
   a long look over the shoulder) is still treated as `DANGER`, and 5+ seconds
   as `CRITICAL`, because the system cannot tell this apart from a head drop.
+- While the mouth is yawning-wide, eye closure is ignored for up to 6 seconds
+  (eyes squint during a yawn). Someone falling asleep with the jaw dropped
+  wide open is therefore flagged about 6 seconds later than usual.
 - Squinting (bright sun, laughing hard) can look like closed eyes; held for
   1.5+ seconds it raises a false `DANGER`.
 - The phone check can't tell whose phone it is: a phone mounted on the

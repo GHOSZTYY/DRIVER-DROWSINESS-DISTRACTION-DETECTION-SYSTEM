@@ -3,40 +3,38 @@ import numpy as np
 
 def compute_mar(landmarks):
     """
-    Compute Mouth Aspect Ratio (MAR)
+    Compute Mouth Aspect Ratio (MAR) from the inner lip edge.
 
-    Mouth landmarks:
-    13  -> upper lip
-    14  -> lower lip
-    81  -> upper mouth
-    311 -> lower mouth
-    61  -> left mouth corner
-    291 -> right mouth corner
+    Three vertical pairs (upper inner lip -> lower inner lip):
+    13  -> 14   centre
+    81  -> 178  left of centre
+    311 -> 402  right of centre
+    One horizontal pair (outer corners):
+    61  -> 291
+
+    81 and 311 are both on the UPPER inner lip, so the old 81 -> 311 pair
+    measured across the lip, not its opening (about 0.24 with the mouth
+    closed). With matching upper/lower pairs a closed mouth reads about 0.
     """
 
-    p13 = np.array(landmarks[13][:2])
-    p14 = np.array(landmarks[14][:2])
+    def point(i):
+        return np.array(landmarks[i][:2])
 
-    p81 = np.array(landmarks[81][:2])
-    p311 = np.array(landmarks[311][:2])
+    vertical_1 = np.linalg.norm(point(13) - point(14))
+    vertical_2 = np.linalg.norm(point(81) - point(178))
+    vertical_3 = np.linalg.norm(point(311) - point(402))
 
-    p61 = np.array(landmarks[61][:2])
-    p291 = np.array(landmarks[291][:2])
-
-    vertical_1 = np.linalg.norm(p13 - p14)
-    vertical_2 = np.linalg.norm(p81 - p311)
-
-    horizontal = np.linalg.norm(p61 - p291)
+    horizontal = np.linalg.norm(point(61) - point(291))
 
     if horizontal == 0:
         return 0.0
 
-    mar = (vertical_1 + vertical_2) / (2 * horizontal)
+    mar = (vertical_1 + vertical_2 + vertical_3) / (3 * horizontal)
 
     return float(mar)
 
 
-def detect_yawn(mar, threshold=0.6):
+def detect_yawn(mar, threshold=0.32):
     """
     Detect if the driver is yawning
     """

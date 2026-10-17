@@ -48,6 +48,18 @@ VOICE_REPEAT_SEC = 6.0   # spoken warning repeats this often while CRITICAL
 EPISODE_END_SEC = 3.0    # calm this long before a new alert is logged again
 VOICE_WARNING = "Warning. Critical driver impairment detected. Please pull over."
 
+# Yawn: inner-lip MAR is about 0.00-0.08 with the mouth closed, 0.19-0.26
+# while talking and about 0.38 in a yawn (measured on real face photos).
+# The mouth must also stay that open for a while — talking opens it for
+# well under a second at a time, a yawn holds it open for several seconds.
+YAWN_MIN_MAR = 0.32
+YAWN_ABOVE_BASELINE = 0.25   # for drivers whose mouth rests slightly open
+YAWN_MIN_SEC = 1.5
+# Eyes squint during a yawn (EAR drops to about 0.13-0.17), which would look
+# like closing eyes. Eye closure is ignored while the mouth is yawning-wide,
+# but only for this long, so sleeping with the jaw dropped open is still caught.
+YAWN_EYE_IGNORE_SEC = 6.0
+
 # YOLO often misses a held phone for a frame or two, so the phone timer only
 # resets after the phone has been gone this long.
 PHONE_GRACE_SEC = 1.0
@@ -119,6 +131,7 @@ def run_driving_loop(driver_name, profile, cap):
     total_alerts = 0
     total_yawns = 0
     is_yawning = False
+    mouth_open_since = None  # time the mouth first opened yawn-wide; None otherwise
     eyes_closed_since = None  # time the eyes first closed; None while they're open
     current_emotion = "Neutral"
     prev_status = "SAFE"
@@ -205,26 +218,34 @@ def run_driving_loop(driver_name, profile, cap):
         # ==========================================
         # 2. PERSONALIZED EYE / YAWN CHECKS (against calibrated baseline)
         # ==========================================
+        # Mouth first: a yawn counts only once the mouth has stayed wide open
+        # for YAWN_MIN_SEC, so talking and laughing don't count.
+        yawn_mar = max(YAWN_MIN_MAR, profile['mar_mean'] + YAWN_ABOVE_BASELINE)
+        if current_mar is not None and current_mar > yawn_mar:
+            if mouth_open_since is None:
+                mouth_open_since = time.time()
+        elif current_mar is not None:
+            mouth_open_since = None
+        mouth_open_sec = time.time() - mouth_open_since if mouth_open_since is not None else 0.0
+        yawn_now = mouth_open_sec >= YAWN_MIN_SEC
+        if yawn_now and not is_yawning:
+            total_yawns += 1
+        is_yawning = yawn_now
+        yawn_result = {"mar": current_mar, "yawning": is_yawning}
+
         # Eyes are timed in real seconds (not frames) so the limits mean the
         # same on a fast or slow computer. With no face the timer keeps
         # running, so eyes closing and then the head dropping out of view
         # doesn't wipe the evidence.
+        squinting_from_yawn = mouth_open_since is not None and mouth_open_sec < YAWN_EYE_IGNORE_SEC
         if current_ear is not None:
-            if current_ear < (profile['ear_mean'] * 0.8):
+            if current_ear < (profile['ear_mean'] * 0.8) and not squinting_from_yawn:
                 if eyes_closed_since is None:
                     eyes_closed_since = time.time()
             else:
                 eyes_closed_since = None
         eyes_closed_sec = time.time() - eyes_closed_since if eyes_closed_since is not None else 0.0
         eye_result = {"ear": current_ear, "closed_sec": eyes_closed_sec}
-
-        if current_mar is not None and current_mar > (profile['mar_mean'] * 1.5):
-            if not is_yawning:
-                total_yawns += 1
-            is_yawning = True
-        else:
-            is_yawning = False
-        yawn_result = {"mar": current_mar, "yawning": is_yawning}
 
         emotion_result = {"emotion": current_emotion}
         face_result = {"missing_sec": no_face_sec}

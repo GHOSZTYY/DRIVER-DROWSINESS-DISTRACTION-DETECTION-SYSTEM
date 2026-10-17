@@ -14,7 +14,7 @@ from src.vision.head_pose import get_pose
 os.makedirs('data/profiles', exist_ok=True)
 
 # Bumped whenever the measurements change meaning; older profiles must be redone.
-PROFILE_VERSION = 3
+PROFILE_VERSION = 4  # 4: mouth openness (MAR) now measured on the inner lips
 
 # Calibration is only accepted if the face was seen in enough of the frames...
 MIN_FACE_FRACTION = 0.6

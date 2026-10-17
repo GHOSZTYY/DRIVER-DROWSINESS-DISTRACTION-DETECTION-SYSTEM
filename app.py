@@ -28,7 +28,7 @@ from src.brain.emotion_detection import detect_emotion
 from src.brain.fusion import calculate_driver_state, PHONE_WARNING_SEC
 
 WINDOW_NAME = "Driver Safety Co-Pilot"
-EMOTION_EVERY_N_FRAMES = 15   # DeepFace is heavy — throttle it
+EMOTION_EVERY_SEC = 2.0   # DeepFace is heavy — run it in the background this often
 
 # level names used by fusion.py's status -> beep.py's sound keys
 STATUS_TO_BEEP_LEVEL = {
@@ -62,6 +62,25 @@ def speak_async(message):
         return  # already speaking, don't stack requests
     _voice_thread = threading.Thread(target=speak_warning, args=(message,), daemon=True)
     _voice_thread.start()
+
+
+_emotion_thread = None
+_emotion_result = {"emotion": None, "seq": 0}  # seq goes up each time a reading finishes
+
+
+def emotion_async(frame):
+    """Run DeepFace on a background thread so the camera loop never waits for it.
+    Skips the request if the previous reading is still running."""
+    global _emotion_thread
+    if _emotion_thread is not None and _emotion_thread.is_alive():
+        return
+
+    def work():
+        _emotion_result["emotion"] = detect_emotion(frame)["emotion"]
+        _emotion_result["seq"] += 1
+
+    _emotion_thread = threading.Thread(target=work, args=(), daemon=True)
+    _emotion_thread.start()
 
 
 def sos_async(driver_name):
@@ -103,7 +122,7 @@ def run_driving_loop(driver_name, profile, cap):
     eyes_closed_since = None  # time the eyes first closed; None while they're open
     current_emotion = "Neutral"
     prev_status = "SAFE"
-    frame_count = 0
+    last_emotion_at = float("-inf")
     no_face_since = None  # time the face was first lost; None while it's visible
     away_since = None     # time the head first turned away; None while facing the road
     phone_since = None    # time a phone was first seen; None when no phone
@@ -122,8 +141,6 @@ def run_driving_loop(driver_name, profile, cap):
         if not ret:
             print("Camera disconnected.")
             break
-
-        frame_count += 1
 
         # ==========================================
         # 1. RUN THE AI MODELS
@@ -148,10 +165,13 @@ def run_driving_loop(driver_name, profile, cap):
             pose_result = None
         no_face_sec = time.time() - no_face_since if no_face_since is not None else 0.0
 
-        if frame_count % EMOTION_EVERY_N_FRAMES == 0:
-            emotion_data = detect_emotion(frame)
-            if emotion_data["emotion"]:
-                current_emotion = emotion_data["emotion"]
+        # Emotion: started every EMOTION_EVERY_SEC seconds in the background;
+        # the latest finished reading is picked up here.
+        if time.time() - last_emotion_at >= EMOTION_EVERY_SEC:
+            emotion_async(frame.copy())
+            last_emotion_at = time.time()
+        if _emotion_result["emotion"]:
+            current_emotion = _emotion_result["emotion"]
 
         # Phone detection: no real object-detection model wired in yet —
         # kept as an always-empty placeholder on purpose (tracked separately).

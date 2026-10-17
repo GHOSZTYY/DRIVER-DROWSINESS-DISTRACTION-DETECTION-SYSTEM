@@ -55,7 +55,7 @@ landmarks per frame).
         │                                     │
         ├──► YOLOv8n (cell phone only) ───────┤
         │                                     ▼
-        └──► DeepFace (every 15th frame) ─► Fusion engine ──► score + status
+        └──► DeepFace (every 2 s, background) ─► Fusion engine ──► score + status
                                                                │
                          ┌──────────────┬─────────────────────┼────────────────┐
                          ▼              ▼                     ▼                ▼
@@ -64,7 +64,8 @@ landmarks per frame).
 
 1. **Capture** — frames are read from webcam 0 (DirectShow backend on Windows).
 2. **Perceive** — each frame goes through the landmark model, the phone
-   detector, and (every 15 frames, because it is heavy) the emotion model.
+   detector, and (every 2 seconds, on a background thread because it is heavy)
+   the emotion model.
 3. **Judge** — eye and yawn readings are checked against the driver's own
    calibrated baseline, and short glitches are filtered out by requiring the
    condition to last several consecutive frames.
@@ -326,7 +327,7 @@ the history back, ready for a dashboard.
 | `VOICE_REPEAT_SEC` | `app.py` | 6 s | How often the spoken warning repeats while CRITICAL |
 | `MIN_BEEP_GAP_SEC` | `app.py` | 1 s | Shortest time between two beeps |
 | `EPISODE_END_SEC` | `app.py` | 3 s | Calm time before a new alert is logged again |
-| `EMOTION_EVERY_N_FRAMES` | `app.py` | 15 | How often DeepFace runs |
+| `EMOTION_EVERY_SEC` | `app.py` | 2 s | How often DeepFace runs (in the background) |
 | EAR ratio | `app.py` | 0.8 × baseline | Below this counts as closing |
 | MAR ratio | `app.py` | 1.5 × baseline | Above this counts as a yawn |
 | `YAW_THRESHOLD` / `PITCH_THRESHOLD` | `src/vision/head_pose.py` | 25° / 20° | Head turn limits |

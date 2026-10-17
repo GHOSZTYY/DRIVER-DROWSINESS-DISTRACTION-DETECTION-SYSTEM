@@ -38,6 +38,17 @@ STATUS_TO_BEEP_LEVEL = {
     "CRITICAL": "critical",
 }
 
+# Higher number = more serious; used to spot when things get worse
+STATUS_RANK = {"SAFE": 0, "WARNING": 1, "DROWSY": 2, "CRITICAL": 3}
+
+# A single short beep is easy to sleep through, so DROWSY/CRITICAL keep
+# repeating until the driver recovers. WARNING still beeps only once.
+BEEP_REPEAT_SEC = {"DROWSY": 2.0, "CRITICAL": 1.0}
+MIN_BEEP_GAP_SEC = 1.0   # never beep more often than this, even if the status flickers
+VOICE_REPEAT_SEC = 6.0   # spoken warning repeats this often while CRITICAL
+EPISODE_END_SEC = 3.0    # calm this long before a new alert is logged again
+VOICE_WARNING = "Warning. Critical driver impairment detected. Please pull over."
+
 _voice_thread = None
 
 
@@ -90,6 +101,10 @@ def run_driving_loop(driver_name, profile, cap):
     prev_status = "SAFE"
     frame_count = 0
     no_face_since = None  # time the face was first lost; None while it's visible
+    last_beep_at = float("-inf")
+    last_voice_at = float("-inf")
+    episode_peak = None   # worst status logged in the current alert episode; None when calm
+    calm_since = None     # when the driver last dropped out of DROWSY/CRITICAL
     prev_time = time.time()
     fps = 0
 
@@ -171,23 +186,54 @@ def run_driving_loop(driver_name, profile, cap):
         state = calculate_driver_state(eye_result, yawn_result, phone_result, pose_result,
                                        emotion_result, face_result)
 
-        # Fire alerts only on a state change so sounds/voice/db don't spam every frame
-        if state["status"] != prev_status:
-            level = STATUS_TO_BEEP_LEVEL.get(state["status"])
-            if level:
-                play_beep(level)
-            if state["alarm"]:
+        # ==========================================
+        # 4. ALERTS
+        # ==========================================
+        now = time.time()
+        status = state["status"]
+        level = STATUS_TO_BEEP_LEVEL.get(status)
+        got_worse = STATUS_RANK[status] > STATUS_RANK[prev_status]
+
+        # Beep right away when things get worse, then keep repeating for as
+        # long as DROWSY/CRITICAL lasts.
+        repeat_sec = BEEP_REPEAT_SEC.get(status)
+        since_beep = now - last_beep_at
+        if level and since_beep >= MIN_BEEP_GAP_SEC and (
+                got_worse or (repeat_sec is not None and since_beep >= repeat_sec)):
+            play_beep(level)
+            last_beep_at = now
+
+        # Spoken warning repeats while CRITICAL lasts
+        if status == "CRITICAL" and now - last_voice_at >= VOICE_REPEAT_SEC:
+            speak_async(VOICE_WARNING)
+            last_voice_at = now
+
+        # SOS: unchanged — fires on every entry into CRITICAL (to be reworked
+        # together with the SOS feature).
+        if status == "CRITICAL" and prev_status != "CRITICAL":
+            sos_async(driver_name)
+
+        # History: one row when an alert episode starts, one more if it
+        # escalates to CRITICAL. Flickering in and out doesn't add rows; the
+        # episode only ends after EPISODE_END_SEC of calm.
+        if state["alarm"]:
+            calm_since = None
+            if episode_peak is None or (status == "CRITICAL" and episode_peak != "CRITICAL"):
                 total_alerts += 1
-                log_event(session_id, level or "low", ear=current_ear, mar=current_mar,
+                log_event(session_id, level, ear=current_ear, mar=current_mar,
                           yaw=pose_result["yaw"] if pose_result else None,
                           phone=phone_result["phone_detected"], emotion=current_emotion)
-            if state["status"] == "CRITICAL":
-                speak_async("Warning. Critical driver impairment detected. Please pull over.")
-                sos_async(driver_name)
-        prev_status = state["status"]
+                episode_peak = status
+        elif episode_peak is not None:
+            if calm_since is None:
+                calm_since = now
+            if now - calm_since >= EPISODE_END_SEC:
+                episode_peak = None
+
+        prev_status = status
 
         # ==========================================
-        # 4. VIDEO + HUD
+        # 5. VIDEO + HUD
         # ==========================================
         curr_time = time.time()
         fps = int(1 / (curr_time - prev_time + 0.001))

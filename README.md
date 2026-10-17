@@ -70,9 +70,10 @@ landmarks per frame).
    condition to last several consecutive frames.
 4. **Fuse** — `src/brain/fusion.py` adds up weighted points from every signal
    into one score and maps it to a status.
-5. **Act** — alerts fire only when the status *changes*, so the driver is not
-   spammed every frame. Voice and SMS run on background threads so the video
-   never freezes.
+5. **Act** — a beep plays as soon as the status gets worse, and keeps
+   repeating while the driver stays `DROWSY` or `CRITICAL`, so a single short
+   beep can't be slept through. Voice and SMS run on background threads so
+   the video never freezes.
 6. **Record** — each session and every alert are written to a local SQLite
    database.
 
@@ -99,9 +100,13 @@ The total score sets the driver's status:
 | Score | Status | What happens |
 |---|---|---|
 | 0 | `SAFE` | Nothing — green HUD |
-| 1 – 4 | `WARNING` | Soft beep |
-| 5 – 7 | `DROWSY` | Medium beep, event logged |
-| 8+ | `CRITICAL` | Loud beep, spoken "please pull over" warning, SOS SMS, event logged |
+| 1 – 4 | `WARNING` | Soft beep (once) |
+| 5 – 7 | `DROWSY` | Medium beep, repeated every 2 s while it lasts; event logged |
+| 8+ | `CRITICAL` | Loud beep every 1 s, spoken "please pull over" warning every 6 s, SOS SMS, event logged |
+
+History gets one entry when an alert starts and one more if it gets worse
+(`DROWSY` → `CRITICAL`). Flickering in and out of an alert doesn't add
+entries; a new alert is only logged after 3 seconds of calm.
 
 The on-screen HUD shows the driver name, FPS, current status and score, the
 reasons behind it (for example `Eyes closed, Yawning`), the latest emotion,
@@ -303,6 +308,10 @@ the history back, ready for a dashboard.
 |---|---|---|---|
 | `EYES_CLOSED_DROWSY_SEC` / `EYES_CLOSED_CRITICAL_SEC` | `src/brain/fusion.py` | 1.5 s / 3 s | Eyes-closed time before DROWSY / CRITICAL |
 | `NO_FACE_DROWSY_SEC` / `NO_FACE_CRITICAL_SEC` | `src/brain/fusion.py` | 2 s / 5 s | Face-missing time before DROWSY / CRITICAL |
+| `BEEP_REPEAT_SEC` | `app.py` | DROWSY 2 s, CRITICAL 1 s | How often the beep repeats while the alert lasts |
+| `VOICE_REPEAT_SEC` | `app.py` | 6 s | How often the spoken warning repeats while CRITICAL |
+| `MIN_BEEP_GAP_SEC` | `app.py` | 1 s | Shortest time between two beeps |
+| `EPISODE_END_SEC` | `app.py` | 3 s | Calm time before a new alert is logged again |
 | `EMOTION_EVERY_N_FRAMES` | `app.py` | 15 | How often DeepFace runs |
 | EAR ratio | `app.py` | 0.8 × baseline | Below this counts as closing |
 | MAR ratio | `app.py` | 1.5 × baseline | Above this counts as a yawn |

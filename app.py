@@ -307,9 +307,7 @@ def main():
         print("Error: Could not open webcam (index 0). Is it in use by another app?")
         return
 
-    profile = load_profile(driver_name)
-    if profile and not profile.get("calibrated", True):
-        print("⚠️  Existing profile was saved without a detected face — recalibrate for accurate results.")
+    profile = load_profile(driver_name)  # None if missing, outdated or incomplete
 
     print(f"\n{'✅ Profile active' if profile else '⚠️  No profile found'} for '{driver_name}'.")
     print("Controls:  c = calibrate (5s)   s = start driving   q = quit\n")
@@ -331,9 +329,13 @@ def main():
             if key == ord('q'):
                 break
             elif key == ord('c'):
-                profile = run_calibration(driver_name, cap, duration_sec=5, window_name=WINDOW_NAME)
-                print("Calibration complete." if profile.get("calibrated") else
-                      "Calibration finished but no face was detected — using generic fallback values.")
+                result = run_calibration(driver_name, cap, duration_sec=5, window_name=WINDOW_NAME)
+                if result.get("calibrated"):
+                    profile = result
+                    print("Calibration complete.")
+                else:
+                    # keep the previous profile (if any); a bad recording is never used
+                    print(f"Calibration failed: {result['error']}. Press 'c' to try again.")
             elif key == ord('s'):
                 if not profile:
                     print("Crucial: you must calibrate your baseline before driving!")

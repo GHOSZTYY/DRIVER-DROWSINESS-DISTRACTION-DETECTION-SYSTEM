@@ -12,14 +12,29 @@ from src.vision.mouth_mar import compute_mar
 # Ensure the profiles directory exists
 os.makedirs('data/profiles', exist_ok=True)
 
+# Bumped whenever the measurements change meaning; older profiles must be redone.
+PROFILE_VERSION = 2
+
+# Calibration is only accepted if the face was seen in enough of the frames...
+MIN_FACE_FRACTION = 0.6
+MIN_FACE_FRAMES = 10
+# ...and the eyes were really open. Open eyes measure about 0.22-0.30 EAR with
+# these landmarks; closed eyes about 0.05-0.15. Below this the driver was
+# probably squinting, half asleep or the eyes weren't visible.
+MIN_OPEN_EAR = 0.15
+
 def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety Co-Pilot"):
     """
     Records driver baselines using the given (already-open) webcam capture
     and saves them to JSON. Shows a live countdown in the given cv2 window
     so the driver knows calibration is in progress.
+
+    Returns the profile dict. If the recording wasn't good enough,
+    "calibrated" is False, "error" says why, and nothing is saved.
     """
     ear_list = []
     mar_list = []
+    total_frames = 0
 
     start_time = time.time()
 
@@ -28,6 +43,7 @@ def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety
         if not ret:
             break
 
+        total_frames += 1
         landmarks = get_landmarks(frame)
         if landmarks:
             left = compute_ear(landmarks, LEFT_EYE)
@@ -39,25 +55,36 @@ def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety
         remaining = duration_sec - (time.time() - start_time)
         cv2.putText(frame, f"Calibrating... {remaining:.1f}s  Look straight ahead, act naturally",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(frame, f"Face found in {len(ear_list)}/{total_frames} frames",
+                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
         cv2.imshow(window_name, frame)
         cv2.waitKey(1)
 
-    # Safe fallback if the camera couldn't find a face
-    calibrated = bool(ear_list)
-    if not ear_list:
-        ear_list = [0.25]
-        mar_list = [0.50]
+    # Reject a bad recording instead of saving made-up fallback values
+    error = None
+    face_fraction = len(ear_list) / total_frames if total_frames else 0.0
+    if len(ear_list) < MIN_FACE_FRAMES or face_fraction < MIN_FACE_FRACTION:
+        error = (f"face found in only {len(ear_list)}/{total_frames} frames - "
+                 "sit in front of the camera with your face fully visible")
+    elif float(np.median(ear_list)) < MIN_OPEN_EAR:
+        error = ("eyes looked closed or covered (sunglasses?) - "
+                 "keep your eyes open normally and try again")
+    if error:
+        return {'driver': driver_name, 'calibrated': False, 'error': error}
 
-    # Compute mean and standard deviation
+    # Median instead of mean so blinks and talking during the 5 s don't drag
+    # the baseline down/up. The *_mean keys are kept for the rest of the app.
     data = {
         'driver': driver_name,
-        'ear_mean': float(np.mean(ear_list)),
+        'version': PROFILE_VERSION,
+        'ear_mean': float(np.median(ear_list)),
         'ear_std': float(np.std(ear_list)),
-        'mar_mean': float(np.mean(mar_list)),
-        'yaw_mean': 0.0, # Placeholder for pose math later
-        'calibrated': calibrated # False if no face was ever detected during calibration
+        'mar_mean': float(np.median(mar_list)),
+        'face_frames': len(ear_list),
+        'total_frames': total_frames,
+        'calibrated': True
     }
-    
+
     # Save as JSON
     file_path = f'data/profiles/{driver_name}.json'
     with open(file_path, 'w') as f:
@@ -66,9 +93,15 @@ def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety
     return data
 
 def load_profile(driver_name):
-    """Reads the JSON profile and returns the dictionary."""
+    """Reads the JSON profile and returns the dictionary.
+    Returns None if there is no profile, or if it was made by an older
+    version of the app or without a detected face (it must be redone)."""
     file_path = f'data/profiles/{driver_name}.json'
     if os.path.exists(file_path):
         with open(file_path, 'r') as f:
-            return json.load(f)
+            data = json.load(f)
+        if data.get('version') != PROFILE_VERSION or not data.get('calibrated'):
+            print(f"Profile for {driver_name} is outdated or incomplete - please recalibrate.")
+            return None
+        return data
     return None

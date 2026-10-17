@@ -132,13 +132,24 @@ Eye and mouth shapes differ a lot between people, so a fixed EAR/MAR threshold
 gives false alarms for some drivers and misses others. Instead, the app records
 a **5-second baseline** for each driver while they look ahead normally:
 
-- mean and standard deviation of EAR
-- mean MAR
+- median EAR (eye openness) and its standard deviation
+- median MAR (mouth openness)
+
+The median is used instead of the mean so blinks and talking during the
+recording don't shift the baseline.
+
+A recording is **rejected, and nothing is saved**, if:
+
+- the face was found in fewer than 60% of the frames (or fewer than 10), or
+- the median EAR is below 0.15, meaning the eyes looked closed or covered
+  (half asleep, squinting, sunglasses).
+
+The app then asks the driver to press `c` again and keeps any previous
+profile. Driving can't start without a valid profile.
 
 The profile is saved to `data/profiles/<driver_name>.json` and reused on the
-next run. If no face is seen during calibration, generic fallback values
-(EAR 0.25, MAR 0.50) are stored and the app warns that the driver should
-recalibrate.
+next run. Each profile stores a version number; profiles made by an older
+version of the app are ignored and the driver is asked to recalibrate.
 
 ---
 

@@ -22,6 +22,7 @@ from src.data.db import create_tables, start_session, log_event, end_session
 
 # --- IMPORT TEAM AI MODELS ---
 from src.vision.face_mesh import get_landmarks
+from src.vision.lighting import detect_face, eyes_covered, light_notice
 from src.vision.eye_ear import compute_ear, LEFT_EYE, RIGHT_EYE
 from src.vision.mouth_mar import compute_mar
 from src.vision.head_pose import get_pose
@@ -123,7 +124,7 @@ def open_camera():
     return cap
 
 
-def draw_hud(frame, profile, state, current_emotion, total_yawns, fps):
+def draw_hud(frame, profile, state, current_emotion, total_yawns, fps, notices=()):
     y = 30
     cv2.putText(frame, f"Driver: {profile['driver']}  FPS: {fps}", (10, y),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
@@ -139,6 +140,10 @@ def draw_hud(frame, profile, state, current_emotion, total_yawns, fps):
         y += 25
     cv2.putText(frame, f"Emotion: {current_emotion}  Total yawns: {total_yawns}", (10, y),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 2)
+    # monitoring-quality warnings (lighting, covered eyes)
+    for notice in notices:
+        y += 25
+        cv2.putText(frame, notice, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
     return frame
 
 
@@ -218,7 +223,10 @@ def run_driving_loop(driver_name, profile, cap):
         # ==========================================
         # 1. RUN THE AI MODELS
         # ==========================================
-        landmarks = get_landmarks(frame)
+        # dark frames get a second, brightened try if no face is found
+        landmarks, light_level = detect_face(frame, get_landmarks)
+        # sunglasses: the eye check can't see the eyes, so it's switched off
+        eyes_hidden = eyes_covered(frame, landmarks)
 
         if landmarks:
             no_face_since = None
@@ -307,7 +315,7 @@ def run_driving_loop(driver_name, profile, cap):
         # running, so eyes closing and then the head dropping out of view
         # doesn't wipe the evidence.
         squinting_from_yawn = mouth_open_since is not None and mouth_open_sec < YAWN_EYE_IGNORE_SEC
-        if current_ear is not None:
+        if current_ear is not None and not eyes_hidden:
             if current_ear < (profile['ear_mean'] * 0.8) and not squinting_from_yawn:
                 if eyes_closed_since is None:
                     eyes_closed_since = time.time()
@@ -383,7 +391,9 @@ def run_driving_loop(driver_name, profile, cap):
         fps = int(1 / (curr_time - prev_time + 0.001))
         prev_time = curr_time
 
-        draw_hud(frame, profile, state, current_emotion, total_yawns, fps)
+        notices = [n for n in (light_notice(light_level),
+                               "EYES NOT VISIBLE (sunglasses?) - eye check off" if eyes_hidden else None) if n]
+        draw_hud(frame, profile, state, current_emotion, total_yawns, fps, notices)
         if time.time() - quit_pressed_at <= QUIT_CONFIRM_SEC:
             cv2.putText(frame, "Press q again to STOP monitoring", (10, 460),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)

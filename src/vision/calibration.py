@@ -9,6 +9,7 @@ from src.vision.face_mesh import get_landmarks
 from src.vision.eye_ear import compute_ear, LEFT_EYE, RIGHT_EYE
 from src.vision.mouth_mar import compute_mar
 from src.vision.head_pose import get_pose
+from src.vision.lighting import detect_face, eyes_covered
 
 # Ensure the profiles directory exists
 os.makedirs('data/profiles', exist_ok=True)
@@ -42,6 +43,7 @@ def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety
     pitch_list = []
     yaw_list = []
     total_frames = 0
+    covered_frames = 0
 
     start_time = time.time()
 
@@ -51,7 +53,9 @@ def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety
             break
 
         total_frames += 1
-        landmarks = get_landmarks(frame)
+        landmarks, _ = detect_face(frame, get_landmarks)
+        if landmarks and eyes_covered(frame, landmarks):
+            covered_frames += 1
         if landmarks:
             left = compute_ear(landmarks, LEFT_EYE)
             right = compute_ear(landmarks, RIGHT_EYE)
@@ -77,6 +81,8 @@ def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety
     if len(ear_list) < MIN_FACE_FRAMES or face_fraction < MIN_FACE_FRACTION:
         error = (f"face found in only {len(ear_list)}/{total_frames} frames - "
                  "sit in front of the camera with your face fully visible")
+    elif covered_frames > len(ear_list) / 2:
+        error = "eyes are covered (sunglasses?) - remove them and try again"
     elif float(np.median(ear_list)) < MIN_OPEN_EAR:
         error = ("eyes looked closed or covered (sunglasses?) - "
                  "keep your eyes open normally and try again")

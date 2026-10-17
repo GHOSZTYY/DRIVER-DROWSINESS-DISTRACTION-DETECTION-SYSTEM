@@ -41,6 +41,14 @@ webcam, speakers, and (optionally) a Twilio account for SOS messages.
 All face-based signals come from **MediaPipe Face Landmarker** (478 facial
 landmarks per frame).
 
+**Lighting and sunglasses** (`src/vision/lighting.py`): if no face is found
+in a dark frame, the app tries again on a brightened copy (CLAHE contrast
+boost). The screen shows `Low light` below brightness 80/255 and
+`TOO DARK - monitoring unreliable` below 25. If both eye areas are much darker
+than the cheeks (sunglasses), the eye-closure check is switched off and the
+screen says `EYES NOT VISIBLE`; the face, head, yawn and phone checks keep
+working.
+
 ---
 
 ## How it works
@@ -151,7 +159,8 @@ recording don't shift the baseline.
 A recording is **rejected, and nothing is saved**, if:
 
 - the face was found in fewer than 60% of the frames (or fewer than 10),
-- the head moved too much (head angle spread over 8°), or
+- the head moved too much (head angle spread over 8°),
+- the eyes were covered (sunglasses) in more than half the frames, or
 - the median EAR is below 0.15, meaning the eyes looked closed or covered
   (half asleep, squinting, sunglasses).
 
@@ -199,6 +208,7 @@ version of the app are ignored and the driver is asked to recalibrate.
     │   ├── mouth_mar.py        # Mouth Aspect Ratio
     │   ├── head_pose.py        # Yaw / pitch / roll via solvePnP
     │   ├── phone_yolo.py       # YOLOv8n "cell phone" detections
+    │   ├── lighting.py         # Low-light retry, darkness warning, sunglasses check
     │   └── calibration.py      # Per-driver baseline recording and loading
     ├── brain/
     │   ├── phone_detector.py   # Frame-count phone flag (used by phone_yolo.py's test mode)
@@ -386,6 +396,9 @@ the history back, ready for a dashboard.
   treated as mounted. A mounted phone gives one `WARNING` beep at the start
   of a drive before it is recognised. The passenger check only uses sideways
   distance from the driver's face, so a passenger leaning close counts.
+- A normal webcam has no infrared. The low-light retry helps in dim light,
+  but real night driving needs an infrared camera. With sunglasses on, closed
+  eyes can't be detected at all (only a head drop or missing face is).
 - Head-pose angles are relative to the position recorded during calibration;
   if the camera is moved, the driver must recalibrate.
 - Emotion recognition from a single webcam frame is noisy. It is only used as

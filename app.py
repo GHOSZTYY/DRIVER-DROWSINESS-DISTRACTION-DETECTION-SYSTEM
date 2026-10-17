@@ -123,6 +123,7 @@ def run_driving_loop(driver_name, profile, cap):
     current_emotion = "Neutral"
     prev_status = "SAFE"
     last_emotion_at = float("-inf")
+    head_baseline = {"pitch": profile["pitch_mean"], "yaw": profile["yaw_mean"]}
     no_face_since = None  # time the face was first lost; None while it's visible
     away_since = None     # time the head first turned away; None while facing the road
     phone_since = None    # time a phone was first seen; None when no phone
@@ -153,7 +154,8 @@ def run_driving_loop(driver_name, profile, cap):
             right = compute_ear(landmarks, RIGHT_EYE)
             current_ear = (left + right) / 2.0
             current_mar = compute_mar(landmarks)
-            pose_result = get_pose(landmarks, frame.shape)
+            # angles relative to this driver's calibrated straight-ahead position
+            pose_result = get_pose(landmarks, frame.shape, baseline=head_baseline)
         else:
             # No face is NOT proof the driver is fine — a head dropping forward
             # in sleep, a hand over the face or a covered camera all look like

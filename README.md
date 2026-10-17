@@ -34,7 +34,7 @@ webcam, speakers, and (optionally) a Twilio account for SOS messages.
 |---|---|---|
 | **Eye closure** | Eye Aspect Ratio (EAR) from 6 landmarks per eye, compared with the driver's calibrated baseline | `src/vision/eye_ear.py` |
 | **Yawning** | Mouth Aspect Ratio (MAR) from 6 mouth landmarks, compared with the calibrated baseline | `src/vision/mouth_mar.py` |
-| **Looking away** | Head yaw / pitch from a 6-point PnP solve (OpenCV `solvePnP`) | `src/vision/head_pose.py` |
+| **Looking away** | Head yaw / pitch from a 6-point PnP solve (OpenCV `solvePnP`), measured relative to the driver's calibrated straight-ahead position | `src/vision/head_pose.py` |
 | **Phone usage** | YOLOv8n object detection, restricted to the COCO "cell phone" class, timed in seconds | `src/vision/phone_yolo.py` |
 | **Emotional state** | DeepFace emotion analysis (angry, fear, sad, surprise raise the risk) | `src/brain/emotion_detection.py` |
 
@@ -134,13 +134,17 @@ a **5-second baseline** for each driver while they look ahead normally:
 
 - median EAR (eye openness) and its standard deviation
 - median MAR (mouth openness)
+- median head pitch and yaw while looking at the road. This is the
+  "straight ahead" position for this camera, so the camera can sit above,
+  below or to the side of the driver without any manual angle setting.
 
 The median is used instead of the mean so blinks and talking during the
 recording don't shift the baseline.
 
 A recording is **rejected, and nothing is saved**, if:
 
-- the face was found in fewer than 60% of the frames (or fewer than 10), or
+- the face was found in fewer than 60% of the frames (or fewer than 10),
+- the head moved too much (head angle spread over 8°), or
 - the median EAR is below 0.15, meaning the eyes looked closed or covered
   (half asleep, squinting, sunglasses).
 
@@ -342,7 +346,7 @@ the history back, ready for a dashboard.
 | EAR ratio | `app.py` | 0.8 × baseline | Below this counts as closing |
 | MAR ratio | `app.py` | 1.5 × baseline | Above this counts as a yawn |
 | `YAW_THRESHOLD` / `PITCH_THRESHOLD` | `src/vision/head_pose.py` | 25° / 20° | Head turn limits |
-| `CAMERA_PITCH_OFFSET` | `src/vision/head_pose.py` | 25° | Compensates for a camera mounted above eye level — set to 0 for a camera at eye level |
+| `CAMERA_PITCH_OFFSET` | `src/vision/head_pose.py` | 25° | Only used by `head_pose.py`'s own test mode; the app uses each driver's calibrated head angle instead |
 | Phone confidence | `src/vision/phone_yolo.py` | 0.5 | Minimum YOLO confidence for a phone box |
 | Score bands | `src/brain/fusion.py` | 0 / 1–4 / 5–7 / 8+ | Status boundaries |
 
@@ -358,8 +362,8 @@ the history back, ready for a dashboard.
 - The phone check can't tell whose phone it is: a phone mounted on the
   dashboard for navigation, or a passenger's phone, counts as phone use and
   raises `DANGER` after 5 seconds.
-- Head-pose thresholds assume the camera is roughly in front of the driver;
-  `CAMERA_PITCH_OFFSET` must match the actual mounting angle.
+- Head-pose angles are relative to the position recorded during calibration;
+  if the camera is moved, the driver must recalibrate.
 - Emotion recognition from a single webcam frame is noisy and is only used as
   a small extra weight.
 - This is an academic prototype. It is not a certified safety device and must

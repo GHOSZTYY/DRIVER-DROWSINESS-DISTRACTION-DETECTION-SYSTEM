@@ -32,14 +32,23 @@ DISTRACT_FRAMES  = 45  # ≈1.5 seconds at 30 FPS
 #   CAMERA_PITCH_OFFSET = -15  # Camera mounted below driver (rare)
 # ============================================
 CAMERA_PITCH_OFFSET = 25.0   # ← ADJUST THIS: degrees camera is tilted down
+#
+# The main app does NOT use this fixed offset any more: calibration records
+# each driver's own straight-ahead pitch and yaw, and app.py passes that in
+# as `baseline`. This value is only the fallback for this file's test mode.
 
 # Persist between calls
 _distract_counter = 0
 
 
-def get_pose(landmarks, frame_shape):
+def get_pose(landmarks, frame_shape, baseline=None):
     """
     Estimate head pose from 6 face landmarks.
+
+    baseline: {"pitch": float, "yaw": float} — the driver's own straight-ahead
+    angles from calibration. They are subtracted so "looking at the road" reads
+    as pitch 0 / yaw 0 for any camera position. Pass {"pitch": 0, "yaw": 0} to
+    get the raw angles. Without a baseline, CAMERA_PITCH_OFFSET is used.
     """
     global _distract_counter
 
@@ -94,7 +103,14 @@ def get_pose(landmarks, frame_shape):
     # NEW: Compensate for camera mounting angle
     # ============================================
     # Subtract the fixed camera tilt so "looking at road" = pitch ≈ 0
-    pitch = pitch - CAMERA_PITCH_OFFSET
+    if baseline is not None:
+        pitch = pitch - baseline["pitch"]
+        yaw = yaw - baseline["yaw"]
+    else:
+        pitch = pitch - CAMERA_PITCH_OFFSET
+    # keep angles in -180..180 after the subtraction
+    pitch = (pitch + 180.0) % 360.0 - 180.0
+    yaw = (yaw + 180.0) % 360.0 - 180.0
 
     # Check distraction: yaw (left/right) OR pitch (up/down relative to road)
     # After compensation:
@@ -114,7 +130,7 @@ def get_pose(landmarks, frame_shape):
         "pitch":      round(float(pitch), 2),
         "yaw":        round(float(yaw),   2),
         "roll":       round(float(roll),  2),
-        "looking_away": looking_away,  # this frame only — app.py times it in seconds
+        "looking_away": bool(looking_away),  # this frame only — app.py times it in seconds
         "distracted": distracted       # 45-frame streak, used by this file's own test mode
     }
 

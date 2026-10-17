@@ -8,12 +8,13 @@ import cv2
 from src.vision.face_mesh import get_landmarks
 from src.vision.eye_ear import compute_ear, LEFT_EYE, RIGHT_EYE
 from src.vision.mouth_mar import compute_mar
+from src.vision.head_pose import get_pose
 
 # Ensure the profiles directory exists
 os.makedirs('data/profiles', exist_ok=True)
 
 # Bumped whenever the measurements change meaning; older profiles must be redone.
-PROFILE_VERSION = 2
+PROFILE_VERSION = 3
 
 # Calibration is only accepted if the face was seen in enough of the frames...
 MIN_FACE_FRACTION = 0.6
@@ -22,6 +23,10 @@ MIN_FACE_FRAMES = 10
 # these landmarks; closed eyes about 0.05-0.15. Below this the driver was
 # probably squinting, half asleep or the eyes weren't visible.
 MIN_OPEN_EAR = 0.15
+# The head must stay fairly still while the straight-ahead angle is recorded.
+MAX_POSE_STD_DEG = 8.0
+
+RAW_POSE = {"pitch": 0.0, "yaw": 0.0}  # baseline that leaves the angles untouched
 
 def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety Co-Pilot"):
     """
@@ -34,6 +39,8 @@ def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety
     """
     ear_list = []
     mar_list = []
+    pitch_list = []
+    yaw_list = []
     total_frames = 0
 
     start_time = time.time()
@@ -50,6 +57,10 @@ def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety
             right = compute_ear(landmarks, RIGHT_EYE)
             ear_list.append((left + right) / 2.0)
             mar_list.append(compute_mar(landmarks))
+            pose = get_pose(landmarks, frame.shape, baseline=RAW_POSE)
+            if pose:
+                pitch_list.append(pose["pitch"])
+                yaw_list.append(pose["yaw"])
 
         # Show the video during calibration so you know it's working!
         remaining = duration_sec - (time.time() - start_time)
@@ -69,6 +80,10 @@ def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety
     elif float(np.median(ear_list)) < MIN_OPEN_EAR:
         error = ("eyes looked closed or covered (sunglasses?) - "
                  "keep your eyes open normally and try again")
+    elif len(pitch_list) < MIN_FACE_FRAMES:
+        error = "head angle could not be measured - face the camera and try again"
+    elif max(np.std(pitch_list), np.std(yaw_list)) > MAX_POSE_STD_DEG:
+        error = "head moved too much - keep looking at the road and try again"
     if error:
         return {'driver': driver_name, 'calibrated': False, 'error': error}
 
@@ -80,6 +95,9 @@ def run_calibration(driver_name, cap, duration_sec=5, window_name="Driver Safety
         'ear_mean': float(np.median(ear_list)),
         'ear_std': float(np.std(ear_list)),
         'mar_mean': float(np.median(mar_list)),
+        # the driver's own straight-ahead head angle for this camera position
+        'pitch_mean': float(np.median(pitch_list)),
+        'yaw_mean': float(np.median(yaw_list)),
         'face_frames': len(ear_list),
         'total_frames': total_frames,
         'calibrated': True

@@ -36,7 +36,7 @@ webcam, speakers, and (optionally) a Twilio account for SOS messages.
 | **Yawning** | Mouth Aspect Ratio (MAR) from the inner lip edge (3 upper/lower pairs over the mouth width); the mouth must stay wide open for 1.5 s | `src/vision/mouth_mar.py` |
 | **Looking away** | Head yaw / pitch from a 6-point PnP solve (OpenCV `solvePnP`), measured relative to the driver's calibrated straight-ahead position | `src/vision/head_pose.py` |
 | **Phone usage** | YOLOv8n object detection, restricted to the COCO "cell phone" class, timed in seconds; mounted phones and phones out of the driver's reach are ignored | `src/vision/phone_yolo.py`, `src/brain/phone_filter.py` |
-| **Emotional state** | DeepFace emotion analysis (angry, fear, sad, surprise raise the risk) | `src/brain/emotion_detection.py` |
+| **Emotional state** | DeepFace emotion analysis (angry, fear, sad, surprise raise the risk); only while the face is visible, and only after two readings in a row agree | `src/brain/emotion_detection.py` |
 
 All face-based signals come from **MediaPipe Face Landmarker** (478 facial
 landmarks per frame).
@@ -351,6 +351,7 @@ the history back, ready for a dashboard.
 | `MIN_BEEP_GAP_SEC` | `app.py` | 1 s | Shortest time between two beeps |
 | `EPISODE_END_SEC` | `app.py` | 3 s | Calm time before a new alert is logged again |
 | `EMOTION_EVERY_SEC` | `app.py` | 2 s | How often DeepFace runs (in the background) |
+| `EMOTION_MAX_AGE_SEC` | `app.py` | 6 s | A confirmed emotion falls back to neutral if not confirmed again within this time |
 | EAR ratio | `app.py` | 0.8 × baseline | Below this counts as closing |
 | `YAWN_MIN_MAR` / `YAWN_ABOVE_BASELINE` | `app.py` | 0.32 / +0.25 | Mouth openness that counts as yawn-wide |
 | `YAWN_MIN_SEC` | `app.py` | 1.5 s | How long the mouth must stay yawn-wide (filters out talking) |
@@ -381,8 +382,9 @@ the history back, ready for a dashboard.
   distance from the driver's face, so a passenger leaning close counts.
 - Head-pose angles are relative to the position recorded during calibration;
   if the camera is moved, the driver must recalibrate.
-- Emotion recognition from a single webcam frame is noisy and is only used as
-  a small extra weight.
+- Emotion recognition from a single webcam frame is noisy. It is only used as
+  a small extra weight, needs two matching readings (so it reacts about
+  4 seconds late), and can never start an alarm on its own.
 - This is an academic prototype. It is not a certified safety device and must
   not replace an alert, rested driver.
 

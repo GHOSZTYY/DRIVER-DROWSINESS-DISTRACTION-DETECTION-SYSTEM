@@ -30,6 +30,10 @@ from src.brain.phone_filter import PhoneFilter
 
 WINDOW_NAME = "Driver Safety Co-Pilot"
 EMOTION_EVERY_SEC = 2.0   # DeepFace is heavy — run it in the background this often
+# One DeepFace guess from one frame is often wrong, so an emotion only counts
+# after two readings in a row agree, and it is dropped back to neutral if no
+# confirmed reading arrives for this long (e.g. the face is out of view).
+EMOTION_MAX_AGE_SEC = 6.0
 
 # level names used by fusion.py's status -> beep.py's sound keys
 STATUS_TO_BEEP_LEVEL = {
@@ -134,7 +138,10 @@ def run_driving_loop(driver_name, profile, cap):
     is_yawning = False
     mouth_open_since = None  # time the mouth first opened yawn-wide; None otherwise
     eyes_closed_since = None  # time the eyes first closed; None while they're open
-    current_emotion = "Neutral"
+    current_emotion = "neutral"
+    pending_emotion = None          # last reading, waiting for a second matching one
+    emotion_confirmed_at = float("-inf")
+    emotion_seq_seen = _emotion_result["seq"]
     prev_status = "SAFE"
     last_emotion_at = float("-inf")
     head_baseline = {"pitch": profile["pitch_mean"], "yaw": profile["yaw_mean"]}
@@ -182,13 +189,21 @@ def run_driving_loop(driver_name, profile, cap):
             pose_result = None
         no_face_sec = time.time() - no_face_since if no_face_since is not None else 0.0
 
-        # Emotion: started every EMOTION_EVERY_SEC seconds in the background;
-        # the latest finished reading is picked up here.
-        if time.time() - last_emotion_at >= EMOTION_EVERY_SEC:
+        # Emotion: started every EMOTION_EVERY_SEC seconds in the background,
+        # only while a face is visible (otherwise DeepFace guesses at the
+        # whole picture). Each finished reading is picked up once.
+        if landmarks and time.time() - last_emotion_at >= EMOTION_EVERY_SEC:
             emotion_async(frame.copy())
             last_emotion_at = time.time()
-        if _emotion_result["emotion"]:
-            current_emotion = _emotion_result["emotion"]
+        if _emotion_result["seq"] != emotion_seq_seen:
+            emotion_seq_seen = _emotion_result["seq"]
+            reading = _emotion_result["emotion"]
+            if reading and reading == pending_emotion:
+                current_emotion = reading
+                emotion_confirmed_at = time.time()
+            pending_emotion = reading
+        if time.time() - emotion_confirmed_at > EMOTION_MAX_AGE_SEC:
+            current_emotion = "neutral"
 
         # Phone detection: no real object-detection model wired in yet —
         # kept as an always-empty placeholder on purpose (tracked separately).

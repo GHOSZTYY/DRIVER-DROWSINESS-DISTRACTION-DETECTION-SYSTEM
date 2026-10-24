@@ -3,10 +3,17 @@
 A real-time, webcam-based driver safety co-pilot. It watches the driver's face
 through an ordinary webcam, checks for signs of sleepiness and distraction,
 combines everything into one safety score, and raises escalating alerts —
-from a soft beep up to a spoken warning and an emergency SMS.
+from a soft beep up to a repeating alarm and a spoken "please pull over"
+warning.
 
 Everything runs locally on a laptop. No special hardware is needed beyond a
-webcam, speakers, and (optionally) a Twilio account for SOS messages.
+webcam and speakers.
+
+> **Status:** academic prototype. The detection and alert logic is complete
+> and tested with real face photos and simulations; it has not yet been
+> validated on live driving video. The **SOS SMS is an early placeholder**
+> and has not been built as a proper feature yet (see
+> [Project status](#project-status)).
 
 ---
 
@@ -24,6 +31,7 @@ webcam, speakers, and (optionally) a Twilio account for SOS messages.
 - [Session logging (SQLite)](#session-logging-sqlite)
 - [Configuration and tuning](#configuration-and-tuning)
 - [Known limitations](#known-limitations)
+- [Project status](#project-status)
 - [Team](#team)
 
 ---
@@ -70,21 +78,23 @@ working.
                                                                │
                          ┌──────────────┬─────────────────────┼────────────────┐
                          ▼              ▼                     ▼                ▼
-                    Beep (pygame)  Voice (pyttsx3)   SOS SMS (Twilio)   SQLite event log
+                    Beep (pygame)  Voice (pyttsx3)   SOS (placeholder)  SQLite event log
 ```
 
 1. **Capture** — frames are read from webcam 0 (DirectShow backend on Windows).
 2. **Perceive** — each frame goes through the landmark model, the phone
    detector, and (every 2 seconds, on a background thread because it is heavy)
    the emotion model.
-3. **Judge** — eye and yawn readings are checked against the driver's own
-   calibrated baseline, and short glitches are filtered out by requiring the
-   condition to last several consecutive frames.
+3. **Judge** — eye, mouth and head readings are checked against the driver's
+   own calibrated baseline. Every sign is timed in real seconds (eyes closed,
+   face missing, looking away, phone in view, mouth open), so blinks, mirror
+   checks and detection glitches are ignored and the app behaves the same on
+   a fast or slow computer.
 4. **Fuse** — `src/brain/fusion.py` adds up weighted points from every signal
    into one score and maps it to a status.
 5. **Act** — a beep plays as soon as the status gets worse, and keeps
    repeating while the driver stays `DANGER` or `CRITICAL`, so a single short
-   beep can't be slept through. Voice and SMS run on background threads so
+   beep can't be slept through. The voice runs on a background thread so
    the video never freezes.
 6. **Record** — each session and every alert are written to a local SQLite
    database.
@@ -121,7 +131,7 @@ The total score sets the driver's status:
 | 0 | `SAFE` | Nothing — green HUD |
 | 1 – 4 | `WARNING` | Soft beep (once); event logged |
 | 5 – 7 | `DANGER` | Medium beep, repeated every 2 s while it lasts; event logged |
-| 8+ | `CRITICAL` | Loud beep every 1 s, spoken "please pull over" warning every 6 s, SOS SMS, event logged |
+| 8+ | `CRITICAL` | Loud beep every 1 s, spoken "please pull over" warning every 6 s, event logged (the SOS placeholder is also triggered) |
 
 History gets one entry when an episode starts (`WARNING` or worse) and one
 more each time it gets worse (`WARNING` → `DANGER` → `CRITICAL`). Flickering
@@ -132,7 +142,7 @@ If the camera disconnects during a drive, monitoring doesn't stop: the app
 shows `CAMERA LOST`, sounds the critical beep every 2 s, says "the driver
 monitoring camera is disconnected" (repeated every 6 s), logs the event
 (cause `Camera`) and tries to reopen the camera every 2 s until it's back.
-No SOS is sent for this.
+The SOS placeholder is not triggered for this.
 
 Every alert also gets a **cause**: `Drowsiness` (eyes closed, face not
 visible, yawning), `Distraction` (phone, looking away) or both.
@@ -186,7 +196,7 @@ version of the app are ignored and the driver is asked to recalibrate.
 | Emotion recognition | DeepFace on TensorFlow 2.16.1 / tf-keras 2.16.0 |
 | Maths | NumPy 1.26.4, SciPy |
 | Audio alerts | pygame (WAV beeps), pyttsx3 (offline text-to-speech) |
-| SOS messaging | Twilio, python-dotenv |
+| SOS messaging (placeholder) | Twilio, python-dotenv |
 | Storage | SQLite (Python standard library) |
 
 ---
@@ -221,7 +231,7 @@ version of the app are ignored and the driver is asked to recalibrate.
     ├── alerts/
     │   ├── beep.py             # Plays the three alert sounds
     │   ├── voice.py            # Spoken warnings
-    │   └── sos.py              # Emergency SMS via Twilio
+    │   └── sos.py              # SOS SMS via Twilio (early placeholder)
     └── data/
         └── db.py               # SQLite sessions + events
 ```
@@ -245,9 +255,10 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### Optional: SOS SMS
+### Optional: SOS SMS (placeholder)
 
-Copy the template and fill in your Twilio details:
+The SOS message is an early placeholder, not a finished feature. To try it,
+copy the template and fill in your Twilio details:
 
 ```bash
 copy .env.template .env           # Windows
@@ -409,8 +420,41 @@ the history back, ready for a dashboard.
 - Emotion recognition from a single webcam frame is noisy. It is only used as
   a small extra weight, needs two matching readings (so it reacts about
   4 seconds late), and can never start an alarm on its own.
+- Repeated short eye closures don't add up: the eye timer restarts whenever
+  the eyes open, so many closures of just under 1.5 seconds raise no alert. A
+  closure-over-time measure (PERCLOS) is planned.
+- Looking down at a phone with only the eyes (head still straight) isn't
+  detected; this needs gaze tracking from the iris landmarks.
+- DeepFace finds faces on its own, so with a passenger in view the emotion
+  may be read from the passenger's face.
+- The yawn count is shown on screen but not yet used in the score.
+- The app doesn't know whether the car is moving, so looking back while
+  reversing or using the phone while parked raise the same alerts.
+- With sunglasses, the eye check is switched off with an on-screen notice
+  only (no sound).
+- Anyone can type another driver's name and use their profile.
+- Thresholds come from reasoning and tests on real face photos; accuracy has
+  not yet been measured on live driving video.
 - This is an academic prototype. It is not a certified safety device and must
   not replace an alert, rested driver.
+
+---
+
+## Project status
+
+**Done:** all detection and alert logic — seconds-based timers for every sign,
+escalating and repeating alarms, per-driver calibration (eyes, mouth, head
+angle), mounted and passenger phone filtering, driver face tracking, low-light
+retry, sunglasses check, camera-loss handling and full event history.
+
+**Next:**
+
+1. Test with a live webcam.
+2. Catch repeated short eye closures (PERCLOS).
+3. Gaze tracking for eyes-only glances.
+4. Record labelled test videos and measure accuracy; decide from the results
+   whether a custom-trained phone model is worth it.
+5. Design and build the SOS feature properly.
 
 ---
 
@@ -420,4 +464,4 @@ the history back, ready for a dashboard.
 |---|---|
 | Mridul Binjrajka | [@GHOSZTYY](https://github.com/GHOSZTYY) |
 | Sarthak Khandelwal | [@sarthak-k08](https://github.com/sarthak-k08) |
-| Samridhi Kumari | — |
+| Samridhi Kumari | [@Samridhi-Kumari](https://github.com/Samridhi-Kumari) |
